@@ -1,0 +1,27 @@
+# Local development: PostgreSQL plus the API on http://localhost:8080.
+# Load demo data once with: docker compose run --rm api seed-demo
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: admin
+    ports: ["5432:5432"]
+    volumes: [db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin"]
+      interval: 2s
+      retries: 30
+  api:
+    build: .
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgres://admin:admin@db:5432/admin?sslmode=disable
+      COOKIE_SECURE: "false" # plain HTTP in development only
+    ports: ["8080:8080"]
+    volumes: [uploads:/data/uploads]
+volumes:
+  db:
+  uploads:
