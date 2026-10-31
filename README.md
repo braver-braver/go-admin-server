@@ -1,4 +1,4 @@
-# react-admin-starter-server
+# go-admin-server
 
 Go backend for [react-admin-starter](https://github.com/braver-braver/react-admin-starter). It implements the frontend's `/api/v1` contract (`docs/api.openapi.yaml`) and is intended as a production base: further business modules are added here.
 
