@@ -1,0 +1,1103 @@
+openapi: 3.1.0
+info:
+  title: React Admin Starter API
+  version: 0.1.0
+  description: Same-origin cookie sessions. Development MSW is a demonstration only.
+servers:
+  - url: /api/v1
+security:
+  - sessionCookie: []
+paths:
+  /auth/login:
+    post:
+      operationId: login
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestedWith'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 1 }
+      responses:
+        '200':
+          $ref: '#/components/responses/Session'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+  /auth/session:
+    get:
+      operationId: getSession
+      responses:
+        '200':
+          $ref: '#/components/responses/Session'
+        '401':
+          $ref: '#/components/responses/Error'
+  /auth/logout:
+    post:
+      operationId: logout
+      parameters:
+        - $ref: '#/components/parameters/RequestedWith'
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: Session revoked. Server expires the session cookie.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [success]
+                    properties:
+                      success: { const: true }
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+  /auth/permissions:
+    get:
+      operationId: getPermissions
+      description: Requires permissions:read. The server checks this permission.
+      responses:
+        '200':
+          description: Current roles and permissions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Permissions'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+  /users:
+    get:
+      operationId: listUsers
+      description: Requires users:read. Pagination, filtering and sorting are computed by the server.
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          description: Values above 100 are clamped to 100 (the response meta reports the effective pageSize).
+          schema: { type: integer, minimum: 1, default: 10 }
+        - name: username
+          in: query
+          description: Matches username, email, full name or phone number.
+          schema: { type: string }
+        - name: status
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string, enum: [active, inactive, invited, suspended] }
+        - name: role
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string, enum: [superadmin, admin, manager, cashier] }
+        - name: sortBy
+          in: query
+          description: One of username, fullName, email, phoneNumber, status, role, createdAt, updatedAt. Any other value falls back to username.
+          schema:
+            type: string
+            default: username
+        - name: sortOrder
+          in: query
+          schema: { type: string, enum: [asc, desc], default: asc }
+      responses:
+        '200':
+          description: One page of users.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/UserList'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: createUser
+      description: Requires users:write and a valid CSRF token.
+      parameters:
+        - $ref: '#/components/parameters/RequestedWith'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserWrite'
+      responses:
+        '201':
+          description: Created user.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/UserRecord'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+  /users/{id}:
+    put:
+      operationId: updateUser
+      description: Requires users:write and a valid CSRF token.
+      parameters:
+        - $ref: '#/components/parameters/RequestedWith'
+        - $ref: '#/components/parameters/CsrfToken'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserWrite'
+      responses:
+        '200':
+          description: Updated user.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/UserRecord'
+        '404':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: deleteUser
+      description: Requires users:write and a valid CSRF token.
+      parameters:
+        - $ref: '#/components/parameters/RequestedWith'
+        - $ref: '#/components/parameters/CsrfToken'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: User deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [success]
+                    properties:
+                      success: { const: true }
+        '404':
+          $ref: '#/components/responses/Error'
+  /users/batch-delete:
+    post:
+      operationId: batchDeleteUsers
+      description: Requires users:write and a valid CSRF token.
+      parameters:
+        - $ref: '#/components/parameters/RequestedWith'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdList'
+      responses:
+        '200':
+          description: Deleted row count.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [deletedCount]
+                    properties:
+                      deletedCount: { type: integer, minimum: 0 }
+        '403':
+          $ref: '#/components/responses/Error'
+  /users/status:
+    patch:
+      operationId: updateUsersStatus
+      description: Requires users:write and a valid CSRF token.
+      parameters:
+        - $ref: '#/components/parameters/RequestedWith'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/IdList'
+                - type: object
+                  required: [status]
+                  properties:
+                    status: { type: string, enum: [active, inactive] }
+      responses:
+        '200':
+          description: Updated row count.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [updatedCount]
+                    properties:
+                      updatedCount: { type: integer, minimum: 0 }
+        '403':
+          $ref: '#/components/responses/Error'
+  /users/invite:
+    post:
+      operationId: inviteUser
+      description: Requires users:write and a valid CSRF token.
+      parameters:
+        - $ref: '#/components/parameters/RequestedWith'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string, enum: [superadmin, admin, manager, cashier] }
+                desc: { type: string }
+      responses:
+        '201':
+          description: Invited user with status invited.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/UserRecord'
+        '422':
+          $ref: '#/components/responses/Error'
+  /users/invite-batch:
+    post:
+      operationId: batchInviteUsers
+      description: Requires users:write and a valid CSRF token.
+      parameters:
+        - $ref: '#/components/parameters/RequestedWith'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdList'
+      responses:
+        '200':
+          description: Invited row count.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [invitedCount]
+                    properties:
+                      invitedCount: { type: integer, minimum: 0 }
+  /uploads:
+    post:
+      operationId: uploadFile
+      description: Requires users:write and a valid CSRF token. Images only, 2MB maximum.
+      parameters:
+        - $ref: '#/components/parameters/RequestedWith'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200':
+          description: Uploaded file metadata and preview URL.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/UploadedFile'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+  /audit-logs:
+    get:
+      operationId: listAuditLogs
+      description: Requires audit:read. Newest entries first.
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          description: Values above 100 are clamped to 100 (the response meta reports the effective pageSize).
+          schema: { type: integer, minimum: 1, default: 10 }
+        - name: action
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+              enum:
+                [
+                  auth.sign_in,
+                  auth.sign_out,
+                  user.created,
+                  user.updated,
+                  user.deleted,
+                  user.batch_deleted,
+                  user.status_changed,
+                  user.invited,
+                  user.batch_invited,
+                  system.changed,
+                ]
+      responses:
+        '200':
+          description: One page of audit logs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AuditList'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+  /auth/navigation:
+    get:
+      operationId: "currentNavigation"
+      description: "Only enabled and granted registered pages; navigation visibility does not grant API access."
+      responses:
+        200:
+          description: "Success"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                required: ["data"]
+                properties:
+                  data:
+                    type: "array"
+                    items:
+                      $ref: "#/components/schemas/SystemMenu"
+        401:
+          $ref: "#/components/responses/Error"
+        403:
+          $ref: "#/components/responses/Error"
+        409:
+          $ref: "#/components/responses/Error"
+        422:
+          $ref: "#/components/responses/Error"
+  /system/options:
+    get:
+      operationId: "systemReferenceOptions"
+      description: "Requires a system resource read capability; only authorized reference resources and department scopes are returned. No accounts or credentials."
+      responses:
+        200:
+          description: "Success"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                required: ["data"]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SystemOptions"
+        401:
+          $ref: "#/components/responses/Error"
+        403:
+          $ref: "#/components/responses/Error"
+        409:
+          $ref: "#/components/responses/Error"
+        422:
+          $ref: "#/components/responses/Error"
+  /system/{resource}:
+    parameters:
+      - name: "resource"
+        in: "path"
+        required: true
+        schema:
+          type: "string"
+          enum: ["accounts", "roles", "permissions", "menus", "departments"]
+    get:
+      operationId: "listSystemRecords"
+      description: "Requires system:{resource}:read. Filter account/department scopes before pagination."
+      parameters:
+        - name: "page"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 1
+            default: 1
+        - name: "pageSize"
+          in: "query"
+          required: false
+          description: "Values above 100 are clamped to 100 (the response meta reports the effective pageSize)."
+          schema:
+            type: "integer"
+            minimum: 1
+            default: 10
+        - name: "search"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+      responses:
+        200:
+          description: "Success"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                required: ["data"]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SystemList"
+        401:
+          $ref: "#/components/responses/Error"
+        403:
+          $ref: "#/components/responses/Error"
+        409:
+          $ref: "#/components/responses/Error"
+        422:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: "createSystemRecord"
+      description: "Requires system:{resource}:write and matching scope. Body schema follows resource; account creation requires password."
+      parameters:
+        - $ref: "#/components/parameters/RequestedWith"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SystemWrite"
+      responses:
+        201:
+          description: "Success"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                required: ["data"]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SystemRecord"
+        401:
+          $ref: "#/components/responses/Error"
+        403:
+          $ref: "#/components/responses/Error"
+        409:
+          $ref: "#/components/responses/Error"
+        422:
+          $ref: "#/components/responses/Error"
+  /system/{resource}/{id}:
+    parameters:
+      - name: "resource"
+        in: "path"
+        required: true
+        schema:
+          type: "string"
+          enum: ["accounts", "roles", "permissions", "menus", "departments"]
+      - name: "id"
+        in: "path"
+        required: true
+        schema:
+          type: "string"
+    put:
+      operationId: "updateSystemRecord"
+      description: "Requires write capability, scope and CSRF. Omitted password preserves credentials; password reset/enable-state change revokes previous sessions. Protected identifiers cannot change."
+      parameters:
+        - $ref: "#/components/parameters/RequestedWith"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SystemWrite"
+      responses:
+        200:
+          description: "Success"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                required: ["data"]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SystemRecord"
+        401:
+          $ref: "#/components/responses/Error"
+        403:
+          $ref: "#/components/responses/Error"
+        409:
+          $ref: "#/components/responses/Error"
+        422:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: "deleteSystemRecord"
+      description: "Requires write capability, scope and CSRF. Referenced records and protected recovery entries cannot be deleted."
+      parameters:
+        - $ref: "#/components/parameters/RequestedWith"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        200:
+          description: "Success"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                required: ["data"]
+                properties:
+                  data:
+                    type: "object"
+                    required: ["success"]
+                    properties:
+                      success:
+                        type: "boolean"
+                        const: true
+                    additionalProperties: false
+        401:
+          $ref: "#/components/responses/Error"
+        403:
+          $ref: "#/components/responses/Error"
+        409:
+          $ref: "#/components/responses/Error"
+        422:
+          $ref: "#/components/responses/Error"
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Production server session, HttpOnly and Secure. MSW uses mock_session only in development.
+  parameters:
+    RequestedWith:
+      name: X-Requested-With
+      in: header
+      required: true
+      schema: { type: string, const: ReactAdminStarter }
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: Token issued with the current session; required for authenticated writes.
+      schema: { type: string, minLength: 1 }
+  schemas:
+    Permissions:
+      type: object
+      required: [roles, permissions]
+      properties:
+        roles:
+          type: array
+          items: { type: string }
+        permissions:
+          type: array
+          items: { type: string }
+    User:
+      allOf:
+        - $ref: '#/components/schemas/Permissions'
+        - type: object
+          required: [id, email, name, routes, departmentId, dataScopes]
+          properties:
+            id: { type: string, minLength: 1 }
+            email: { type: string, format: email }
+            name: { type: string, minLength: 1 }
+            routes: { type: array, items: { type: string } }
+            departmentId: { type: string }
+            dataScope:
+              $ref: '#/components/schemas/DataScope'
+            dataScopes:
+              type: object
+              description: Union scopes only between roles granting the same permission code.
+              additionalProperties:
+                $ref: '#/components/schemas/DataScope'
+    Session:
+      type: object
+      required: [user, csrfToken]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        csrfToken: { type: string, minLength: 1 }
+    UserRecord:
+      type: object
+      required: [id, firstName, lastName, username, email, phoneNumber, status, role, createdAt, updatedAt]
+      properties:
+        id: { type: string, minLength: 1 }
+        firstName: { type: string }
+        lastName: { type: string }
+        username: { type: string }
+        email: { type: string, format: email }
+        phoneNumber: { type: string }
+        status: { type: string, enum: [active, inactive, invited, suspended] }
+        role: { type: string, enum: [superadmin, admin, manager, cashier] }
+        departmentId: { type: string }
+        departmentName: { type: string, readOnly: true }
+        createdBy: { type: string, readOnly: true }
+        avatarUrl: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    UserWrite:
+      type: object
+      required: [firstName, lastName, username, email, phoneNumber, role]
+      properties:
+        firstName: { type: string, minLength: 1 }
+        lastName: { type: string, minLength: 1 }
+        username: { type: string, minLength: 1 }
+        email: { type: string, format: email }
+        phoneNumber: { type: string, minLength: 1 }
+        role: { type: string, enum: [superadmin, admin, manager, cashier] }
+        password: { type: string, minLength: 8 }
+        departmentId: { type: string, description: Must be inside users:write scope. }
+        avatarUrl: { type: string }
+    PageMeta:
+      type: object
+      required: [page, pageSize, total, totalPageCount]
+      properties:
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, minimum: 0 }
+        totalPageCount: { type: integer, minimum: 1 }
+    UserList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserRecord'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+    IdList:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          items: { type: string }
+    UploadedFile:
+      type: object
+      required: [id, name, url, contentType, size]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        url: { type: string }
+        contentType: { type: string }
+        size: { type: integer, minimum: 0 }
+    AuditLog:
+      type: object
+      required: [id, createdAt, actorName, actorEmail, action, target, detail, ip]
+      properties:
+        id: { type: string }
+        createdAt: { type: string, format: date-time }
+        actorName: { type: string }
+        actorEmail: { type: string, format: email }
+        action:
+          type: string
+          enum:
+            [
+              auth.sign_in,
+              auth.sign_out,
+              user.created,
+              user.updated,
+              user.deleted,
+              user.batch_deleted,
+              user.status_changed,
+              user.invited,
+              user.batch_invited,
+              system.changed,
+            ]
+        target: { type: string }
+        detail: { type: string }
+        ip: { type: string }
+    AuditList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLog'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+    DataScope:
+      type: "object"
+      required: ["all", "self", "departments"]
+      properties:
+        all:
+          type: "boolean"
+        self:
+          type: "boolean"
+        departments:
+          type: "array"
+          items:
+            type: "string"
+      additionalProperties: false
+    SystemAccountFields:
+      type: "object"
+      required: ["name", "email", "enabled", "departmentId", "roleIds"]
+      properties:
+        name:
+          type: "string"
+        email:
+          type: "string"
+          format: "email"
+        enabled:
+          type: "boolean"
+        departmentId:
+          type: "string"
+        roleIds:
+          type: "array"
+          items:
+            type: "string"
+      additionalProperties: false
+    SystemAccountWrite:
+      type: "object"
+      required: ["name", "email", "enabled", "departmentId", "roleIds"]
+      properties:
+        name:
+          type: "string"
+        email:
+          type: "string"
+          format: "email"
+        enabled:
+          type: "boolean"
+        departmentId:
+          type: "string"
+        roleIds:
+          type: "array"
+          items:
+            type: "string"
+        password:
+          type: "string"
+          minLength: 8
+          maxLength: 128
+          writeOnly: true
+      additionalProperties: false
+    SystemRoleWrite:
+      type: "object"
+      required: ["name", "code", "enabled", "permissionIds", "menuIds", "scope", "departmentIds"]
+      properties:
+        name:
+          type: "string"
+        code:
+          type: "string"
+        enabled:
+          type: "boolean"
+        permissionIds:
+          type: "array"
+          items:
+            type: "string"
+        menuIds:
+          type: "array"
+          items:
+            type: "string"
+        scope:
+          type: "string"
+          enum: ["all", "department", "descendants", "self", "custom"]
+        departmentIds:
+          type: "array"
+          items:
+            type: "string"
+      additionalProperties: false
+    SystemPermissionWrite:
+      type: "object"
+      required: ["name", "code", "description"]
+      properties:
+        name:
+          type: "string"
+        code:
+          type: "string"
+        description:
+          type: "string"
+      additionalProperties: false
+    SystemMenuWrite:
+      type: "object"
+      required: ["name", "parentId", "kind", "routeId", "enabled", "visible", "order"]
+      properties:
+        name:
+          type: "string"
+        parentId:
+          type: "string"
+        kind:
+          type: "string"
+          enum: ["directory", "page"]
+        routeId:
+          type: "string"
+        enabled:
+          type: "boolean"
+        visible:
+          type: "boolean"
+        order:
+          type: "integer"
+          minimum: 0
+      additionalProperties: false
+    SystemDepartmentWrite:
+      type: "object"
+      required: ["name", "code", "parentId", "enabled"]
+      properties:
+        name:
+          type: "string"
+        code:
+          type: "string"
+        parentId:
+          type: "string"
+        enabled:
+          type: "boolean"
+      additionalProperties: false
+    SystemAccount:
+      type: "object"
+      required: ["name", "email", "enabled", "departmentId", "roleIds", "id", "resource", "protected"]
+      properties:
+        name:
+          type: "string"
+        email:
+          type: "string"
+          format: "email"
+        enabled:
+          type: "boolean"
+        departmentId:
+          type: "string"
+        roleIds:
+          type: "array"
+          items:
+            type: "string"
+        id:
+          type: "string"
+        resource:
+          type: "string"
+          const: "accounts"
+        protected:
+          type: "boolean"
+          readOnly: true
+    SystemRole:
+      type: "object"
+      required: ["name", "code", "enabled", "permissionIds", "menuIds", "scope", "departmentIds", "id", "resource", "protected"]
+      properties:
+        name:
+          type: "string"
+        code:
+          type: "string"
+        enabled:
+          type: "boolean"
+        permissionIds:
+          type: "array"
+          items:
+            type: "string"
+        menuIds:
+          type: "array"
+          items:
+            type: "string"
+        scope:
+          type: "string"
+          enum: ["all", "department", "descendants", "self", "custom"]
+        departmentIds:
+          type: "array"
+          items:
+            type: "string"
+        id:
+          type: "string"
+        resource:
+          type: "string"
+          const: "roles"
+        protected:
+          type: "boolean"
+          readOnly: true
+    SystemPermission:
+      type: "object"
+      required: ["name", "code", "description", "id", "resource", "protected"]
+      properties:
+        name:
+          type: "string"
+        code:
+          type: "string"
+        description:
+          type: "string"
+        id:
+          type: "string"
+        resource:
+          type: "string"
+          const: "permissions"
+        protected:
+          type: "boolean"
+          readOnly: true
+    SystemMenu:
+      type: "object"
+      required: ["name", "parentId", "kind", "routeId", "enabled", "visible", "order", "id", "resource", "protected"]
+      properties:
+        name:
+          type: "string"
+        parentId:
+          type: "string"
+        kind:
+          type: "string"
+          enum: ["directory", "page"]
+        routeId:
+          type: "string"
+        enabled:
+          type: "boolean"
+        visible:
+          type: "boolean"
+        order:
+          type: "integer"
+          minimum: 0
+        id:
+          type: "string"
+        resource:
+          type: "string"
+          const: "menus"
+        protected:
+          type: "boolean"
+          readOnly: true
+    SystemDepartment:
+      type: "object"
+      required: ["name", "code", "parentId", "enabled", "id", "resource", "protected"]
+      properties:
+        name:
+          type: "string"
+        code:
+          type: "string"
+        parentId:
+          type: "string"
+        enabled:
+          type: "boolean"
+        id:
+          type: "string"
+        resource:
+          type: "string"
+          const: "departments"
+        protected:
+          type: "boolean"
+          readOnly: true
+    SystemRecord:
+      oneOf:
+        - $ref: "#/components/schemas/SystemAccount"
+        - $ref: "#/components/schemas/SystemRole"
+        - $ref: "#/components/schemas/SystemPermission"
+        - $ref: "#/components/schemas/SystemMenu"
+        - $ref: "#/components/schemas/SystemDepartment"
+      discriminator:
+        propertyName: "resource"
+    SystemWrite:
+      oneOf:
+        - $ref: "#/components/schemas/SystemAccountWrite"
+        - $ref: "#/components/schemas/SystemRoleWrite"
+        - $ref: "#/components/schemas/SystemPermissionWrite"
+        - $ref: "#/components/schemas/SystemMenuWrite"
+        - $ref: "#/components/schemas/SystemDepartmentWrite"
+    SystemList:
+      type: "object"
+      required: ["items", "meta"]
+      properties:
+        items:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/SystemRecord"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+    SystemOptions:
+      type: "object"
+      required: ["items"]
+      properties:
+        items:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/SystemRecord"
+
+  responses:
+    Session:
+      x-go-name: SessionResponseBody
+      description: Validated session. Login sets a rotated session cookie; all session responses use Cache-Control no-store.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                $ref: '#/components/schemas/Session'
+    Error:
+      description: Request rejected. HTTP status carries authentication or authorization failure.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string }
+                  message: { type: string }
