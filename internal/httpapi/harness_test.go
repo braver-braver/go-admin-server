@@ -25,6 +25,8 @@ import (
 
 	"github.com/braver-braver/go-admin-server/internal/auth"
 	"github.com/braver-braver/go-admin-server/internal/authz"
+	"github.com/braver-braver/go-admin-server/internal/httpx"
+	"github.com/braver-braver/go-admin-server/internal/modules/users"
 	"github.com/braver-braver/go-admin-server/internal/store"
 )
 
@@ -88,14 +90,15 @@ func setup() error {
 		return err
 	}
 	defer st.Close()
-	if err := st.Migrate(ctx); err != nil {
+	mods := []httpx.Module{users.New(st, os.TempDir())}
+	if err := Install(ctx, st, slog.New(slog.NewTextHandler(io.Discard, nil)), mods); err != nil {
 		return err
 	}
 	hash, err := auth.HashPassword("Demo1234!", fastParams)
 	if err != nil {
 		return err
 	}
-	snap := authz.Demo()
+	snap := authz.Demo(Catalog(mods))
 	passwords := map[string]string{}
 	for _, a := range snap.Accounts {
 		passwords[a.ID] = hash
@@ -103,7 +106,7 @@ func setup() error {
 	if _, err := st.Bootstrap(ctx, snap, passwords); err != nil {
 		return err
 	}
-	if _, err := st.SeedDemoUsers(ctx, 120, authz.AdminAccountID, []string{"root", "operations", "support", "sales"}); err != nil {
+	if err := mods[0].(httpx.DemoSeeder).SeedDemo(ctx); err != nil {
 		return err
 	}
 	st.Close()
@@ -126,6 +129,13 @@ type tenv struct {
 
 func newTestEnv(t *testing.T, tweak ...func(*Config)) *tenv {
 	t.Helper()
+	return newTestEnvWith(t, nil, tweak...)
+}
+
+// newTestEnvWith also installs extra modules into the seeded database, the
+// way a module added to an existing installation is installed on restart.
+func newTestEnvWith(t *testing.T, extra func(*store.Store) []httpx.Module, tweak ...func(*Config)) *tenv {
+	t.Helper()
 	if adminURL == "" {
 		t.Skip("TEST_DATABASE_URL not set")
 	}
@@ -138,14 +148,21 @@ func newTestEnv(t *testing.T, tweak ...func(*Config)) *tenv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	mods := []httpx.Module{users.New(st, t.TempDir())}
+	if extra != nil {
+		mods = append(mods, extra(st)...)
+	}
+	if err := Install(ctx, st, slog.New(slog.NewTextHandler(io.Discard, nil)), mods); err != nil {
+		t.Fatal(err)
+	}
 	cfg := Config{
-		CookieName: "session", SessionTTL: time.Hour, UploadDir: t.TempDir(),
+		CookieName: "session", SessionTTL: time.Hour,
 		PasswordParams: fastParams, LoginRate: time.Millisecond, LoginBurst: 1000,
 	}
 	for _, f := range tweak {
 		f(&cfg)
 	}
-	server := New(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := New(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil)), mods...)
 	srv := httptest.NewServer(server.Handler())
 	t.Cleanup(func() {
 		srv.Close()

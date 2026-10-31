@@ -1,4 +1,4 @@
-package store
+package users
 
 import (
 	"context"
@@ -11,9 +11,9 @@ import (
 
 // SeedDemoUsers inserts n deterministic demo business users when the users
 // table is empty, spread over the demo departments. Development only.
-func (s *Store) SeedDemoUsers(ctx context.Context, n int, createdBy string, departments []string) (int, error) {
+func (r *Repo) SeedDemoUsers(ctx context.Context, n int, createdBy string, departments []string) (int, error) {
 	inserted := 0
-	err := s.tx(ctx, func(tx pgx.Tx) error {
+	err := r.st.Tx(ctx, func(tx pgx.Tx) error {
 		var exists bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users)`).Scan(&exists); err != nil || exists {
 			return err

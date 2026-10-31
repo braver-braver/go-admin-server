@@ -125,21 +125,7 @@ func Apply(before *Snapshot, c Change) (*Result, *RuleError) {
 		}
 	}
 	// The super administrator role always holds every permission and menu.
-	if admin := db.role(AdminRoleID); admin != nil {
-		admin.PermissionIDs = admin.PermissionIDs[:0:0]
-		for _, p := range db.Permissions {
-			admin.PermissionIDs = append(admin.PermissionIDs, p.ID)
-		}
-		admin.MenuIDs = admin.MenuIDs[:0:0]
-		for _, m := range db.Menus {
-			admin.MenuIDs = append(admin.MenuIDs, m.ID)
-		}
-		if res.Record != nil {
-			if r, ok := res.Record.(Role); ok && r.ID == AdminRoleID {
-				res.Record = *admin
-			}
-		}
-	}
+	syncAdminRole(db)
 	return res, nil
 }
 
@@ -392,7 +378,7 @@ func (s *Snapshot) putMenu(c Change, id string, protected bool, res *Result) *Ru
 	if in.Kind == "directory" && in.RouteID != "" {
 		return invalid("目录不绑定页面。")
 	}
-	if _, ok := routeByID(in.RouteID); in.Kind == "page" && !ok {
+	if _, ok := s.route(in.RouteID); in.Kind == "page" && !ok {
 		return invalid("只能绑定已注册页面。")
 	}
 	if in.Kind == "page" && slices.ContainsFunc(s.Menus, func(m Menu) bool { return m.ID != c.ID && m.RouteID == in.RouteID }) {

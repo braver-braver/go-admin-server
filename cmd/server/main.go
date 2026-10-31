@@ -21,6 +21,7 @@ import (
 	"github.com/braver-braver/go-admin-server/internal/auth"
 	"github.com/braver-braver/go-admin-server/internal/authz"
 	"github.com/braver-braver/go-admin-server/internal/httpapi"
+	"github.com/braver-braver/go-admin-server/internal/httpx"
 	"github.com/braver-braver/go-admin-server/internal/store"
 )
 
@@ -69,29 +70,33 @@ func run(log *slog.Logger, args []string) error {
 	}
 	defer st.Close()
 
+	mods := modules(st, env("UPLOAD_DIR", "./data/uploads"))
+	catalog := httpapi.Catalog(mods)
 	command := "serve"
 	if len(args) > 0 {
 		command = args[0]
 	}
 	switch command {
 	case "migrate":
-		return st.Migrate(ctx)
+		return httpapi.Install(ctx, st, log, mods)
 	case "seed-demo":
-		if err := st.Migrate(ctx); err != nil {
+		if err := httpapi.Install(ctx, st, log, mods); err != nil {
 			return err
 		}
-		return seedDemo(ctx, log, st)
+		return seedDemo(ctx, log, st, catalog, mods)
 	case "serve":
 	default:
 		return fmt.Errorf("unknown command %q", command)
 	}
 
 	if envBool("MIGRATE_ON_START", true) {
-		if err := st.Migrate(ctx); err != nil {
-			return fmt.Errorf("migrate: %w", err)
+		if err := httpapi.Install(ctx, st, log, mods); err != nil {
+			return fmt.Errorf("install: %w", err)
 		}
+	} else if _, err := st.InstallCatalog(ctx, catalog); err != nil {
+		return err
 	}
-	if err := bootstrap(ctx, log, st); err != nil {
+	if err := bootstrap(ctx, log, st, catalog); err != nil {
 		return err
 	}
 	ttl, err := envDuration("SESSION_TTL", 8*time.Hour)
@@ -115,11 +120,10 @@ func run(log *slog.Logger, args []string) error {
 		SessionTTL:        ttl,
 		AllowedOrigins:    origins,
 		TrustProxyHeaders: envBool("TRUST_PROXY_HEADERS", false),
-		UploadDir:         env("UPLOAD_DIR", "./data/uploads"),
 		PasswordParams:    auth.DefaultParams,
 		LoginRate:         loginRate,
 		LoginBurst:        burst,
-	}, st, log)
+	}, st, log, mods...)
 
 	go purgeSessions(ctx, log, st)
 
@@ -148,7 +152,7 @@ func run(log *slog.Logger, args []string) error {
 }
 
 // bootstrap creates the protected recovery administrator on an empty database.
-func bootstrap(ctx context.Context, log *slog.Logger, st *store.Store) error {
+func bootstrap(ctx context.Context, log *slog.Logger, st *store.Store, catalog authz.Catalog) error {
 	email, password := env("BOOTSTRAP_ADMIN_EMAIL", ""), env("BOOTSTRAP_ADMIN_PASSWORD", "")
 	if email == "" || password == "" {
 		snap, err := st.Snapshot(ctx)
@@ -167,7 +171,7 @@ func bootstrap(ctx context.Context, log *slog.Logger, st *store.Store) error {
 	if err != nil {
 		return err
 	}
-	snap := authz.Bootstrap(env("BOOTSTRAP_ADMIN_NAME", "系统管理员"), email)
+	snap := authz.Bootstrap(catalog, env("BOOTSTRAP_ADMIN_NAME", "系统管理员"), email)
 	wrote, err := st.Bootstrap(ctx, snap, map[string]string{authz.AdminAccountID: hash})
 	if wrote {
 		log.Info("created bootstrap administrator", "email", strings.ToLower(email))
@@ -175,12 +179,12 @@ func bootstrap(ctx context.Context, log *slog.Logger, st *store.Store) error {
 	return err
 }
 
-func seedDemo(ctx context.Context, log *slog.Logger, st *store.Store) error {
+func seedDemo(ctx context.Context, log *slog.Logger, st *store.Store, catalog authz.Catalog, mods []httpx.Module) error {
 	hash, err := auth.HashPassword("Demo1234!", auth.DefaultParams)
 	if err != nil {
 		return err
 	}
-	snap := authz.Demo()
+	snap := authz.Demo(catalog)
 	passwords := map[string]string{}
 	for _, a := range snap.Accounts {
 		passwords[a.ID] = hash
@@ -192,9 +196,15 @@ func seedDemo(ctx context.Context, log *slog.Logger, st *store.Store) error {
 	if !wrote {
 		return errors.New("database already has accounts; seed-demo only runs on an empty database")
 	}
-	n, err := st.SeedDemoUsers(ctx, 120, authz.AdminAccountID, []string{"root", "operations", "support", "sales"})
-	log.Info("seeded demo data", "accounts", len(snap.Accounts), "users", n, "password", "Demo1234!")
-	return err
+	for _, m := range mods {
+		if seeder, ok := m.(httpx.DemoSeeder); ok {
+			if err := seeder.SeedDemo(ctx); err != nil {
+				return fmt.Errorf("seed %s: %w", m.Name(), err)
+			}
+		}
+	}
+	log.Info("seeded demo data", "accounts", len(snap.Accounts), "password", "Demo1234!")
+	return nil
 }
 
 func purgeSessions(ctx context.Context, log *slog.Logger, st *store.Store) {

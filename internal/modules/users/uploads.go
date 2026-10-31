@@ -1,4 +1,4 @@
-package httpapi
+package users
 
 import (
 	"bytes"
@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/braver-braver/go-admin-server/internal/apierr"
-	"github.com/braver-braver/go-admin-server/internal/store"
+	"github.com/braver-braver/go-admin-server/internal/httpx"
 )
 
 const maxUploadBytes = 2 << 20
@@ -29,97 +29,92 @@ var (
 	uploadIDPattern = regexp.MustCompile(`^[0-9a-f-]{36}$`)
 )
 
-func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
-	sess := s.guard(w, r, "users:write")
-	if sess == nil {
-		return
-	}
+func (m *Module) upload(c *httpx.Ctx) {
+	w, r := c.W, c.R
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes+64<<10)
 	mr, err := r.MultipartReader()
 	if err != nil {
-		writeError(w, errFileRequired)
+		httpx.WriteError(w, errFileRequired)
 		return
 	}
 	for {
 		part, err := mr.NextPart()
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			writeError(w, errFileTooLarge)
+			httpx.WriteError(w, errFileTooLarge)
 			return
 		}
 		if err != nil {
-			writeError(w, errFileRequired)
+			httpx.WriteError(w, errFileRequired)
 			return
 		}
 		if part.FormName() != "file" || part.FileName() == "" {
 			continue
 		}
-		s.storeUpload(w, r, sess, part.FileName(), part.Header.Get("Content-Type"), part)
+		m.storeUpload(c, part.FileName(), part.Header.Get("Content-Type"), part)
 		return
 	}
 }
 
-func (s *Server) storeUpload(w http.ResponseWriter, r *http.Request, sess *session, name, declared string, src io.Reader) {
+func (m *Module) storeUpload(c *httpx.Ctx, name, declared string, src io.Reader) {
+	w := c.W
 	data, err := io.ReadAll(io.LimitReader(src, maxUploadBytes+1))
 	var tooBig *http.MaxBytesError
 	if errors.As(err, &tooBig) || len(data) > maxUploadBytes {
-		writeError(w, errFileTooLarge)
+		httpx.WriteError(w, errFileTooLarge)
 		return
 	}
 	if err != nil {
-		writeError(w, errFileRequired)
+		httpx.WriteError(w, errFileRequired)
 		return
 	}
 	// Trust the bytes, not the declared type.
 	sniffed := http.DetectContentType(data)
 	mediaType, _, _ := mime.ParseMediaType(declared)
 	if !slices.Contains(allowedImageTypes, sniffed) || (mediaType != "" && mediaType != sniffed && !(mediaType == "image/jpg" && sniffed == "image/jpeg")) {
-		writeError(w, errFileType)
+		httpx.WriteError(w, errFileType)
 		return
 	}
-	id := newID()
-	if err := os.MkdirAll(s.cfg.UploadDir, 0o750); err != nil {
-		s.fail(w, r, err)
+	id := httpx.NewID()
+	if err := os.MkdirAll(m.uploadDir, 0o750); err != nil {
+		c.Fail(err)
 		return
 	}
-	if err := os.WriteFile(filepath.Join(s.cfg.UploadDir, id), data, 0o640); err != nil {
-		s.fail(w, r, err)
+	if err := os.WriteFile(filepath.Join(m.uploadDir, id), data, 0o640); err != nil {
+		c.Fail(err)
 		return
 	}
-	up := store.Upload{ID: id, Name: filepath.Base(name), ContentType: sniffed, Size: int64(len(data)), UploadedBy: sess.user.ID}
-	if err := s.store.CreateUpload(r.Context(), up); err != nil {
-		s.fail(w, r, err)
+	up := Upload{ID: id, Name: filepath.Base(name), ContentType: sniffed, Size: int64(len(data)), UploadedBy: c.User().ID}
+	if err := m.repo.CreateUpload(c.Context(), up); err != nil {
+		c.Fail(err)
 		return
 	}
-	writeData(w, http.StatusOK, map[string]any{
-		"id": up.ID, "name": up.Name, "url": Prefix + "/uploads/" + up.ID, "contentType": up.ContentType, "size": up.Size,
+	httpx.WriteData(w, http.StatusOK, map[string]any{
+		"id": up.ID, "name": up.Name, "url": "/api/v1/uploads/" + up.ID, "contentType": up.ContentType, "size": up.Size,
 	})
 }
 
 // download serves an uploaded file to accounts that can read business users,
 // whose avatars these files are. Not part of the frontend contract yet.
-func (s *Server) download(w http.ResponseWriter, r *http.Request) {
-	sess := s.guard(w, r, "users:read")
-	if sess == nil {
-		return
-	}
+func (m *Module) download(c *httpx.Ctx) {
+	w, r := c.W, c.R
 	id := r.PathValue("id")
 	if !uploadIDPattern.MatchString(id) {
-		writeError(w, apierr.New(404, "NOT_FOUND", "文件不存在。"))
+		httpx.WriteError(w, apierr.New(404, "NOT_FOUND", "文件不存在。"))
 		return
 	}
-	up, err := s.store.GetUpload(r.Context(), id)
+	up, err := m.repo.GetUpload(r.Context(), id)
 	if err != nil {
-		s.fail(w, r, err)
+		c.Fail(err)
 		return
 	}
 	if up == nil {
-		writeError(w, apierr.New(404, "NOT_FOUND", "文件不存在。"))
+		httpx.WriteError(w, apierr.New(404, "NOT_FOUND", "文件不存在。"))
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(s.cfg.UploadDir, id))
+	data, err := os.ReadFile(filepath.Join(m.uploadDir, id))
 	if err != nil {
-		s.fail(w, r, err)
+		c.Fail(err)
 		return
 	}
 	w.Header().Set("Content-Type", up.ContentType)

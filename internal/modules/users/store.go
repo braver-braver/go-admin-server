@@ -1,4 +1,4 @@
-package store
+package users
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/braver-braver/go-admin-server/internal/store"
 
 	"github.com/braver-braver/go-admin-server/internal/apierr"
 	"github.com/braver-braver/go-admin-server/internal/authz"
@@ -45,7 +47,7 @@ type UserFields struct {
 
 // UsersQuery is a validated list query.
 type UsersQuery struct {
-	Page
+	store.Page
 	Search    string
 	Status    []string
 	Role      []string
@@ -81,10 +83,10 @@ func scanUser(r pgx.Row) (User, error) {
 }
 
 // ListUsers filters by data scope and query before sorting, counting and paging.
-func (s *Store) ListUsers(ctx context.Context, scope authz.ScopeFilter, q UsersQuery) (List[User], error) {
+func (r *Repo) ListUsers(ctx context.Context, scope authz.ScopeFilter, q UsersQuery) (store.List[User], error) {
 	var args []any
 	arg := func(v any) string { args = append(args, v); return "$" + strconv.Itoa(len(args)) }
-	where := scopeSQL(scope, "u.department_id", "u.created_by", &args)
+	where := store.ScopeSQL(scope, "u.department_id", "u.created_by", &args)
 	if q.Search != "" {
 		p := arg("%" + escapeLike(strings.ToLower(q.Search)) + "%")
 		where += fmt.Sprintf(` AND lower(u.username || ' ' || u.email || ' ' || u.last_name || u.first_name || ' ' || u.phone_number) LIKE %s`, p)
@@ -96,30 +98,30 @@ func (s *Store) ListUsers(ctx context.Context, scope authz.ScopeFilter, q UsersQ
 		where += " AND u.role = ANY(" + arg(q.Role) + ")"
 	}
 	var total int
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM users u WHERE `+where, args...).Scan(&total); err != nil {
-		return List[User]{}, err
+	if err := r.st.DB().QueryRow(ctx, `SELECT count(*) FROM users u WHERE `+where, args...).Scan(&total); err != nil {
+		return store.List[User]{}, err
 	}
-	meta := clampPage(q.Page, total)
+	meta := store.ClampPage(q.Page, total)
 	dir := "ASC"
 	if q.SortOrder == "desc" {
 		dir = "DESC"
 	}
 	order := sortColumns[q.SortBy] + " " + dir + ", u.id " + dir
 	limit, offset := arg(meta.PageSize), arg((meta.Page-1)*meta.PageSize)
-	rows, err := s.pool.Query(ctx, `SELECT `+userColumns+` FROM users u LEFT JOIN departments d ON d.id = u.department_id
+	rows, err := r.st.DB().Query(ctx, `SELECT `+userColumns+` FROM users u LEFT JOIN departments d ON d.id = u.department_id
 		WHERE `+where+` ORDER BY `+order+` LIMIT `+limit+` OFFSET `+offset, args...)
 	if err != nil {
-		return List[User]{}, err
+		return store.List[User]{}, err
 	}
 	items, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (User, error) { return scanUser(r) })
-	return List[User]{Items: items, Meta: meta}, err
+	return store.List[User]{Items: items, Meta: meta}, err
 }
 
 func escapeLike(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
-func getUser(ctx context.Context, q Querier, id string, lock bool) (*User, error) {
+func getUser(ctx context.Context, q store.Querier, id string, lock bool) (*User, error) {
 	sql := `SELECT ` + userColumns + ` FROM users u LEFT JOIN departments d ON d.id = u.department_id WHERE u.id = $1`
 	if lock {
 		sql += ` FOR UPDATE OF u`
@@ -140,7 +142,7 @@ var (
 	errDeptDenied    = apierr.New(403, "DATA_SCOPE_DENIED", "所属部门超出范围或不可用。")
 )
 
-func duplicateUser(ctx context.Context, q Querier, email, username, exceptID string) (bool, error) {
+func duplicateUser(ctx context.Context, q store.Querier, email, username, exceptID string) (bool, error) {
 	var dup bool
 	err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE id <> $3 AND (lower(email) = lower($1) OR lower(username) = lower($2)))`,
 		strings.TrimSpace(email), strings.TrimSpace(username), exceptID).Scan(&dup)
@@ -155,9 +157,9 @@ func usableDepartment(snap *authz.Snapshot, id string) bool {
 }
 
 // CreateUser creates a business user owned by the actor.
-func (s *Store) CreateUser(ctx context.Context, p *authz.Principal, snap *authz.Snapshot, actor Actor, id string, f UserFields) (*User, error) {
+func (r *Repo) CreateUser(ctx context.Context, p *authz.Principal, snap *authz.Snapshot, actor store.Actor, id string, f UserFields) (*User, error) {
 	var created *User
-	err := s.tx(ctx, func(tx pgx.Tx) error {
+	err := r.st.Tx(ctx, func(tx pgx.Tx) error {
 		if dup, err := duplicateUser(ctx, tx, f.Email, f.Username, ""); err != nil || dup {
 			return orErr(err, errDuplicateUser)
 		}
@@ -172,7 +174,7 @@ func (s *Store) CreateUser(ctx context.Context, p *authz.Principal, snap *authz.
 		_, err := tx.Exec(ctx, `INSERT INTO users (id, department_id, created_by, first_name, last_name, username, email, phone_number, status, role, avatar_url)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10)`,
 			id, dept, p.ID, f.FirstName, f.LastName, f.Username, f.Email, f.PhoneNumber, f.Role, f.AvatarURL)
-		if isUniqueViolation(err) {
+		if store.IsUniqueViolation(err) {
 			return errDuplicateUser
 		}
 		if err != nil {
@@ -181,15 +183,15 @@ func (s *Store) CreateUser(ctx context.Context, p *authz.Principal, snap *authz.
 		if created, err = getUser(ctx, tx, id, false); err != nil {
 			return err
 		}
-		return appendAudit(ctx, tx, actor, "user.created", created.Username+"（"+created.Email+"）", "创建用户并分配角色 "+created.Role)
+		return store.Audit(ctx, tx, actor, "user.created", created.Username+"（"+created.Email+"）", "创建用户并分配角色 "+created.Role)
 	})
 	return created, err
 }
 
 // UpdateUser checks the scope of the record before and after the change.
-func (s *Store) UpdateUser(ctx context.Context, p *authz.Principal, snap *authz.Snapshot, actor Actor, id string, parse func() (UserFields, bool, error)) (*User, error) {
+func (r *Repo) UpdateUser(ctx context.Context, p *authz.Principal, snap *authz.Snapshot, actor store.Actor, id string, parse func() (UserFields, bool, error)) (*User, error) {
 	var updated *User
-	err := s.tx(ctx, func(tx pgx.Tx) error {
+	err := r.st.Tx(ctx, func(tx pgx.Tx) error {
 		existing, err := getUser(ctx, tx, id, true)
 		if err != nil {
 			return err
@@ -225,7 +227,7 @@ func (s *Store) UpdateUser(ctx context.Context, p *authz.Principal, snap *authz.
 		_, err = tx.Exec(ctx, `UPDATE users SET department_id=$2, first_name=$3, last_name=$4, username=$5, email=$6,
 			phone_number=$7, role=$8, avatar_url=$9, updated_at=now() WHERE id=$1`,
 			id, dept, f.FirstName, f.LastName, f.Username, f.Email, f.PhoneNumber, f.Role, f.AvatarURL)
-		if isUniqueViolation(err) {
+		if store.IsUniqueViolation(err) {
 			return errDuplicateUser
 		}
 		if err != nil {
@@ -234,14 +236,14 @@ func (s *Store) UpdateUser(ctx context.Context, p *authz.Principal, snap *authz.
 		if updated, err = getUser(ctx, tx, id, false); err != nil {
 			return err
 		}
-		return appendAudit(ctx, tx, actor, "user.updated", updated.Username+"（"+updated.Email+"）", "更新用户资料")
+		return store.Audit(ctx, tx, actor, "user.updated", updated.Username+"（"+updated.Email+"）", "更新用户资料")
 	})
 	return updated, err
 }
 
 // DeleteUser deletes one user within the actor's write scope.
-func (s *Store) DeleteUser(ctx context.Context, p *authz.Principal, actor Actor, id string) error {
-	return s.tx(ctx, func(tx pgx.Tx) error {
+func (r *Repo) DeleteUser(ctx context.Context, p *authz.Principal, actor store.Actor, id string) error {
+	return r.st.Tx(ctx, func(tx pgx.Tx) error {
 		existing, err := getUser(ctx, tx, id, true)
 		if err != nil {
 			return err
@@ -255,7 +257,7 @@ func (s *Store) DeleteUser(ctx context.Context, p *authz.Principal, actor Actor,
 		if _, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, id); err != nil {
 			return err
 		}
-		return appendAudit(ctx, tx, actor, "user.deleted", existing.Username+"（"+existing.Email+"）", "删除用户")
+		return store.Audit(ctx, tx, actor, "user.deleted", existing.Username+"（"+existing.Email+"）", "删除用户")
 	})
 }
 
@@ -288,9 +290,9 @@ func ids(users []User) []string {
 }
 
 // BatchDeleteUsers deletes all or none.
-func (s *Store) BatchDeleteUsers(ctx context.Context, p *authz.Principal, actor Actor, requested []string) (int, error) {
+func (r *Repo) BatchDeleteUsers(ctx context.Context, p *authz.Principal, actor store.Actor, requested []string) (int, error) {
 	n := 0
-	err := s.tx(ctx, func(tx pgx.Tx) error {
+	err := r.st.Tx(ctx, func(tx pgx.Tx) error {
 		users, err := lockScoped(ctx, tx, p, requested)
 		if err != nil {
 			return err
@@ -303,15 +305,15 @@ func (s *Store) BatchDeleteUsers(ctx context.Context, p *authz.Principal, actor 
 		if n > 0 {
 			detail = fmt.Sprintf("批量删除 %d 个用户", n)
 		}
-		return appendAudit(ctx, tx, actor, "user.batch_deleted", fmt.Sprintf("%d 个用户", n), detail)
+		return store.Audit(ctx, tx, actor, "user.batch_deleted", fmt.Sprintf("%d 个用户", n), detail)
 	})
 	return n, err
 }
 
 // SetUsersStatus enables or disables all or none.
-func (s *Store) SetUsersStatus(ctx context.Context, p *authz.Principal, actor Actor, requested []string, status string) (int, error) {
+func (r *Repo) SetUsersStatus(ctx context.Context, p *authz.Principal, actor store.Actor, requested []string, status string) (int, error) {
 	n := 0
-	err := s.tx(ctx, func(tx pgx.Tx) error {
+	err := r.st.Tx(ctx, func(tx pgx.Tx) error {
 		users, err := lockScoped(ctx, tx, p, requested)
 		if err != nil {
 			return err
@@ -321,15 +323,15 @@ func (s *Store) SetUsersStatus(ctx context.Context, p *authz.Principal, actor Ac
 		}
 		n = len(users)
 		label := map[string]string{"active": "启用", "inactive": "停用"}[status]
-		return appendAudit(ctx, tx, actor, "user.status_changed", fmt.Sprintf("%d 个用户", n), "批量变更为"+label)
+		return store.Audit(ctx, tx, actor, "user.status_changed", fmt.Sprintf("%d 个用户", n), "批量变更为"+label)
 	})
 	return n, err
 }
 
 // InviteUser creates an invited user in the actor's department.
-func (s *Store) InviteUser(ctx context.Context, p *authz.Principal, actor Actor, id, email, role string) (*User, error) {
+func (r *Repo) InviteUser(ctx context.Context, p *authz.Principal, actor store.Actor, id, email, role string) (*User, error) {
 	var invited *User
-	err := s.tx(ctx, func(tx pgx.Tx) error {
+	err := r.st.Tx(ctx, func(tx pgx.Tx) error {
 		username := strings.ToLower(strings.SplitN(email, "@", 2)[0])
 		if dup, err := duplicateUser(ctx, tx, email, username, ""); err != nil || dup {
 			return orErr(err, apierr.New(422, "DUPLICATE_USER", "该邮箱已被邀请或已存在。"))
@@ -339,7 +341,7 @@ func (s *Store) InviteUser(ctx context.Context, p *authz.Principal, actor Actor,
 		}
 		_, err := tx.Exec(ctx, `INSERT INTO users (id, department_id, created_by, first_name, last_name, username, email, phone_number, status, role)
 			VALUES ($1,$2,$3,'待','邀请',$4,$5,'—','invited',$6)`, id, p.DepartmentID, p.ID, username, email, role)
-		if isUniqueViolation(err) {
+		if store.IsUniqueViolation(err) {
 			return apierr.New(422, "DUPLICATE_USER", "该邮箱已被邀请或已存在。")
 		}
 		if err != nil {
@@ -348,15 +350,15 @@ func (s *Store) InviteUser(ctx context.Context, p *authz.Principal, actor Actor,
 		if invited, err = getUser(ctx, tx, id, false); err != nil {
 			return err
 		}
-		return appendAudit(ctx, tx, actor, "user.invited", invited.Username+"（"+invited.Email+"）", "邀请加入并分配角色 "+role)
+		return store.Audit(ctx, tx, actor, "user.invited", invited.Username+"（"+invited.Email+"）", "邀请加入并分配角色 "+role)
 	})
 	return invited, err
 }
 
 // BatchInviteUsers marks users as invited; already-invited users are skipped.
-func (s *Store) BatchInviteUsers(ctx context.Context, p *authz.Principal, actor Actor, requested []string) (int, error) {
+func (r *Repo) BatchInviteUsers(ctx context.Context, p *authz.Principal, actor store.Actor, requested []string) (int, error) {
 	n := 0
-	err := s.tx(ctx, func(tx pgx.Tx) error {
+	err := r.st.Tx(ctx, func(tx pgx.Tx) error {
 		users, err := lockScoped(ctx, tx, p, requested)
 		if err != nil {
 			return err
@@ -366,7 +368,7 @@ func (s *Store) BatchInviteUsers(ctx context.Context, p *authz.Principal, actor 
 			return err
 		}
 		n = int(tag.RowsAffected())
-		return appendAudit(ctx, tx, actor, "user.batch_invited", fmt.Sprintf("%d 个用户", n), fmt.Sprintf("批量邀请 %d 个用户", n))
+		return store.Audit(ctx, tx, actor, "user.batch_invited", fmt.Sprintf("%d 个用户", n), fmt.Sprintf("批量邀请 %d 个用户", n))
 	})
 	return n, err
 }

@@ -28,7 +28,9 @@ var AuditActions = []string{
 	"user.batch_deleted", "user.status_changed", "user.invited", "user.batch_invited", "system.changed",
 }
 
-func appendAudit(ctx context.Context, q Querier, a Actor, action, target, detail string) error {
+// Audit appends an audit record with q, so it commits or rolls back together
+// with the change it describes.
+func Audit(ctx context.Context, q Querier, a Actor, action, target, detail string) error {
 	_, err := q.Exec(ctx, `INSERT INTO audit_logs (actor_id, actor_name, actor_email, department_id, action, target, detail, ip)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, a.ID, a.Name, a.Email, a.DepartmentID, action, target, detail, a.IP)
 	return err
@@ -36,7 +38,7 @@ func appendAudit(ctx context.Context, q Querier, a Actor, action, target, detail
 
 // AppendAudit records an event outside a business transaction (sign in/out).
 func (s *Store) AppendAudit(ctx context.Context, a Actor, action, target, detail string) error {
-	return appendAudit(ctx, s.pool, a, action, target, detail)
+	return Audit(ctx, s.pool, a, action, target, detail)
 }
 
 // Page is a requested page; the result reports the effective values.
@@ -59,16 +61,16 @@ type List[T any] struct {
 	Meta  PageMeta `json:"meta"`
 }
 
-// clampPage keeps the page within [1, totalPageCount], like the reference mock
+// ClampPage keeps the page within [1, totalPageCount], like the reference mock
 // does for users and audit logs.
-func clampPage(p Page, total int) PageMeta {
+func ClampPage(p Page, total int) PageMeta {
 	pages := max(1, (total+p.PageSize-1)/p.PageSize)
 	return PageMeta{Page: min(max(1, p.Page), pages), PageSize: p.PageSize, Total: total, TotalPageCount: pages}
 }
 
-// scopeSQL renders a data scope as a SQL condition over the given department
+// ScopeSQL renders a data scope as a SQL condition over the given department
 // and owner columns, appending its arguments.
-func scopeSQL(f authz.ScopeFilter, deptCol, ownerCol string, args *[]any) string {
+func ScopeSQL(f authz.ScopeFilter, deptCol, ownerCol string, args *[]any) string {
 	if f.All {
 		return "true"
 	}
@@ -85,7 +87,7 @@ func scopeSQL(f authz.ScopeFilter, deptCol, ownerCol string, args *[]any) string
 // the action filter apply before counting and paging.
 func (s *Store) ListAudit(ctx context.Context, scope authz.ScopeFilter, actions []string, p Page) (List[AuditLog], error) {
 	var args []any
-	where := scopeSQL(scope, "department_id", "actor_id", &args)
+	where := ScopeSQL(scope, "department_id", "actor_id", &args)
 	if len(actions) > 0 {
 		args = append(args, actions)
 		where += " AND action = ANY($" + strconv.Itoa(len(args)) + ")"
@@ -94,7 +96,7 @@ func (s *Store) ListAudit(ctx context.Context, scope authz.ScopeFilter, actions 
 	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM audit_logs WHERE `+where, args...).Scan(&total); err != nil {
 		return List[AuditLog]{}, err
 	}
-	meta := clampPage(p, total)
+	meta := ClampPage(p, total)
 	args = append(args, meta.PageSize, (meta.Page-1)*meta.PageSize)
 	rows, err := s.pool.Query(ctx, `SELECT id, created_at, actor_name, actor_email, action, target, detail, ip
 		FROM audit_logs WHERE `+where+` ORDER BY created_at DESC, id DESC

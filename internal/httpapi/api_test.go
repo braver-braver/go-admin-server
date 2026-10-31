@@ -14,6 +14,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/braver-braver/go-admin-server/internal/httpx"
+	"github.com/braver-braver/go-admin-server/internal/modules/users"
 )
 
 func TestLoginSessionLogout(t *testing.T) {
@@ -68,7 +71,7 @@ func TestPermissionsAndNavigation(t *testing.T) {
 	viewer := e.client().login("viewer@example.com")
 	r := viewer.do("GET", "/auth/permissions", nil)
 	expect(t, r, 200, "")
-	if fmt.Sprint(r.dataMap()["permissions"]) != "[users:read permissions:read]" {
+	if perms := r.dataMap()["permissions"].([]any); len(perms) != 2 || !slices.Contains(perms, any("users:read")) || !slices.Contains(perms, any("permissions:read")) {
 		t.Fatalf("viewer permissions %v", r.dataMap())
 	}
 	guest := e.client().login("guest@example.com")
@@ -419,10 +422,12 @@ func TestRoutesMatchTheContract(t *testing.T) {
 	if spec == nil {
 		t.Skip("TEST_DATABASE_URL not set")
 	}
-	s := &Server{mux: http.NewServeMux()}
+	s := &Server{modules: []httpx.Module{users.New(nil, "")}}
 	routed := map[string]bool{}
-	for _, r := range s.routeTable() {
-		routed[r.method+" "+r.path] = true
+	for _, op := range s.operations() {
+		if op.ID != "downloadFile" { // extension, not in the contract yet
+			routed[op.Method+" "+op.Path] = true
+		}
 	}
 	routed["GET /system/{resource}"] = true
 	routed["POST /system/{resource}"] = true

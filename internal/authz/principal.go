@@ -179,7 +179,7 @@ func (s *Snapshot) Principal(id string) (*Principal, bool) {
 	}
 	for _, m := range s.navigation(p, roles, false) {
 		if m.Kind == "page" {
-			if r, ok := routeByID(m.RouteID); ok {
+			if r, ok := s.route(m.RouteID); ok {
 				p.Routes = append(p.Routes, r.Path)
 			}
 		}
@@ -218,7 +218,7 @@ func (s *Snapshot) navigation(p *Principal, roles []Role, visibleOnly bool) []Me
 		if m.RouteID != DashboardRouteID && !admin && !grants[m.ID] && !grants[m.ParentID] {
 			continue
 		}
-		route, ok := routeByID(m.RouteID)
+		route, ok := s.route(m.RouteID)
 		if !ok || (route.Permission != "" && !p.Has(route.Permission)) {
 			continue
 		}

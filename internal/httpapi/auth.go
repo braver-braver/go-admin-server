@@ -9,27 +9,13 @@ import (
 
 	"github.com/braver-braver/go-admin-server/internal/apierr"
 	"github.com/braver-braver/go-admin-server/internal/auth"
-	"github.com/braver-braver/go-admin-server/internal/authz"
+	"github.com/braver-braver/go-admin-server/internal/httpx"
 	"github.com/braver-braver/go-admin-server/internal/store"
 )
 
-// session is an authenticated request: the stored session plus the live
-// principal recomputed from the current configuration on every request.
-type session struct {
-	tokenHash []byte
-	stored    *store.Session
-	snap      *authz.Snapshot
-	user      *authz.Principal
-	ip        string
-}
-
-func (s *session) actor() store.Actor {
-	return store.Actor{ID: s.user.ID, Name: s.user.Name, Email: s.user.Email, DepartmentID: s.user.DepartmentID, IP: s.ip}
-}
-
 // authenticate resolves the session cookie. A session is valid only while the
 // account still has a principal and its credential version is unchanged.
-func (s *Server) authenticate(r *http.Request) (*session, error) {
+func (s *Server) authenticate(r *http.Request) (*httpx.Session, error) {
 	c, err := r.Cookie(s.cfg.CookieName)
 	if err != nil || c.Value == "" {
 		return nil, apierr.Unauthenticated
@@ -51,14 +37,15 @@ func (s *Server) authenticate(r *http.Request) (*session, error) {
 	if !ok || !known || version != stored.CredentialVersion {
 		return nil, apierr.Unauthenticated
 	}
-	return &session{tokenHash: hash, stored: stored, snap: snap, user: user, ip: s.clientIP(r)}, nil
+	return &httpx.Session{User: user, Snap: snap, CSRFToken: stored.CSRFToken,
+		CredentialVersion: stored.CredentialVersion, TokenHash: hash, IP: s.clientIP(r)}, nil
 }
 
 // guard runs the contract's checks in order: request header and origin for
 // writes, then session, capability and CSRF token. It writes the error and
 // returns nil when a check fails.
-func (s *Server) guard(w http.ResponseWriter, r *http.Request, permission string) *session {
-	write := r.Method != http.MethodGet && r.Method != http.MethodHead
+func (s *Server) guard(w http.ResponseWriter, r *http.Request, permission string) *httpx.Session {
+	write := isWrite(r)
 	if write && !s.checkWriteHeaders(w, r) {
 		return nil
 	}
@@ -67,12 +54,12 @@ func (s *Server) guard(w http.ResponseWriter, r *http.Request, permission string
 		s.fail(w, r, err)
 		return nil
 	}
-	if permission != "" && !sess.user.Has(permission) {
-		writeError(w, apierr.Forbidden)
+	if permission != "" && !sess.User.Has(permission) {
+		httpx.WriteError(w, apierr.Forbidden)
 		return nil
 	}
-	if write && r.Header.Get("X-CSRF-Token") != sess.stored.CSRFToken {
-		writeError(w, apierr.InvalidCSRF)
+	if write && r.Header.Get("X-CSRF-Token") != sess.CSRFToken {
+		httpx.WriteError(w, apierr.InvalidCSRF)
 		return nil
 	}
 	return sess
@@ -82,11 +69,11 @@ func (s *Server) guard(w http.ResponseWriter, r *http.Request, permission string
 // any authentication, and the origin policy.
 func (s *Server) checkWriteHeaders(w http.ResponseWriter, r *http.Request) bool {
 	if r.Header.Get("X-Requested-With") != "ReactAdminStarter" {
-		writeError(w, apierr.RequestHeaderRequired)
+		httpx.WriteError(w, apierr.RequestHeaderRequired)
 		return false
 	}
 	if !s.originAllowed(r) {
-		writeError(w, apierr.OriginNotAllowed)
+		httpx.WriteError(w, apierr.OriginNotAllowed)
 		return false
 	}
 	return true
@@ -101,14 +88,11 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, token string, maxAge in
 
 var loginEmail = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
 
-func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	if !s.checkWriteHeaders(w, r) {
-		return
-	}
-	ip := s.clientIP(r)
-	body := readJSON(w, r)
+func (s *Server) login(c *httpx.Ctx) {
+	w, r := c.W, c.R
+	body := c.Body()
 	if body == nil {
-		writeError(w, apierr.New(400, "INVALID_REQUEST", "请求内容必须是 JSON。"))
+		httpx.WriteError(w, apierr.New(400, "INVALID_REQUEST", "请求内容必须是 JSON。"))
 		return
 	}
 	var in struct {
@@ -117,35 +101,35 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.Unmarshal(body, &in); err != nil || in.Email == nil || in.Password == nil ||
 		!loginEmail.MatchString(*in.Email) || *in.Password == "" {
-		writeError(w, apierr.New(400, "INVALID_CREDENTIALS_FORMAT", "请输入有效的邮箱和密码。"))
+		httpx.WriteError(w, apierr.New(400, "INVALID_CREDENTIALS_FORMAT", "请输入有效的邮箱和密码。"))
 		return
 	}
 	email := strings.ToLower(*in.Email)
-	if !s.limiter.allow("ip:"+ip, "email:"+email) {
-		writeError(w, apierr.RateLimited)
+	if !s.limiter.allow("ip:"+c.IP, "email:"+email) {
+		httpx.WriteError(w, apierr.RateLimited)
 		return
 	}
 	snap, err := s.store.Snapshot(r.Context())
 	if err != nil {
-		s.fail(w, r, err)
+		c.Fail(err)
 		return
 	}
 	invalid := apierr.New(401, "INVALID_CREDENTIALS", "邮箱或密码错误。")
 	account, found := snap.AccountByEmail(email)
 	if !found {
 		auth.VerifyDummy(*in.Password)
-		writeError(w, invalid)
+		httpx.WriteError(w, invalid)
 		return
 	}
 	hash, version, err := s.store.PasswordHash(r.Context(), account.ID)
 	if err != nil {
-		s.fail(w, r, err)
+		c.Fail(err)
 		return
 	}
 	ok, err := auth.VerifyPassword(*in.Password, hash)
 	user, active := snap.Principal(account.ID)
 	if err != nil || !ok || !active || snap.CredentialVersions[account.ID] != version {
-		writeError(w, invalid)
+		httpx.WriteError(w, invalid)
 		return
 	}
 	token, csrf := auth.NewToken(), auth.NewToken()
@@ -154,56 +138,49 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		replaced = auth.TokenHash(old.Value)
 	}
 	stored := store.Session{AccountID: account.ID, CredentialVersion: version, CSRFToken: csrf, ExpiresAt: time.Now().Add(s.cfg.SessionTTL)}
-	if err := s.store.CreateSession(r.Context(), auth.TokenHash(token), replaced, stored, ip, r.UserAgent()); err != nil {
-		s.fail(w, r, err)
+	if err := s.store.CreateSession(r.Context(), auth.TokenHash(token), replaced, stored, c.IP, r.UserAgent()); err != nil {
+		c.Fail(err)
 		return
 	}
-	actor := store.Actor{ID: user.ID, Name: user.Name, Email: user.Email, DepartmentID: user.DepartmentID, IP: ip}
+	actor := store.Actor{ID: user.ID, Name: user.Name, Email: user.Email, DepartmentID: user.DepartmentID, IP: c.IP}
 	if err := s.store.AppendAudit(r.Context(), actor, "auth.sign_in", user.Email, "登录管理端"); err != nil {
-		s.fail(w, r, err)
+		c.Fail(err)
 		return
 	}
 	s.setSessionCookie(w, token, int(s.cfg.SessionTTL.Seconds()))
-	writeData(w, http.StatusOK, map[string]any{"user": user, "csrfToken": csrf})
+	c.OK(map[string]any{"user": user, "csrfToken": csrf})
 }
 
-func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
-	sess := s.guard(w, r, "")
-	if sess == nil {
-		return
-	}
-	writeData(w, http.StatusOK, map[string]any{"user": sess.user, "csrfToken": sess.stored.CSRFToken})
+func (s *Server) getSession(c *httpx.Ctx) {
+	c.OK(map[string]any{"user": c.User(), "csrfToken": c.Session.CSRFToken})
 }
 
-func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
-	sess := s.guard(w, r, "")
-	if sess == nil {
+func (s *Server) logout(c *httpx.Ctx) {
+	if err := s.store.AppendAudit(c.Context(), c.Session.Actor(), "auth.sign_out", c.User().Email, "退出登录"); err != nil {
+		c.Fail(err)
 		return
 	}
-	if err := s.store.AppendAudit(r.Context(), sess.actor(), "auth.sign_out", sess.user.Email, "退出登录"); err != nil {
-		s.fail(w, r, err)
+	if err := s.store.DeleteSession(c.Context(), c.Session.TokenHash); err != nil {
+		c.Fail(err)
 		return
 	}
-	if err := s.store.DeleteSession(r.Context(), sess.tokenHash); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	s.setSessionCookie(w, "", -1)
-	writeData(w, http.StatusOK, map[string]bool{"success": true})
+	s.setSessionCookie(c.W, "", -1)
+	c.OK(map[string]bool{"success": true})
 }
 
-func (s *Server) getPermissions(w http.ResponseWriter, r *http.Request) {
-	sess := s.guard(w, r, "permissions:read")
-	if sess == nil {
-		return
-	}
-	writeData(w, http.StatusOK, map[string]any{"roles": sess.user.Roles, "permissions": sess.user.Permissions})
+func (s *Server) getPermissions(c *httpx.Ctx) {
+	c.OK(map[string]any{"roles": c.User().Roles, "permissions": c.User().Permissions})
 }
 
-func (s *Server) navigation(w http.ResponseWriter, r *http.Request) {
-	sess := s.guard(w, r, "")
-	if sess == nil {
+func (s *Server) navigation(c *httpx.Ctx) {
+	c.OK(c.Session.Snap.Navigation(c.User()))
+}
+
+func (s *Server) listAudit(c *httpx.Ctx) {
+	list, err := s.store.ListAudit(c.Context(), c.User().Filter("audit:read"), c.Multi("action"), c.Page())
+	if err != nil {
+		c.Fail(err)
 		return
 	}
-	writeData(w, http.StatusOK, sess.snap.Navigation(sess.user))
+	c.OK(list)
 }

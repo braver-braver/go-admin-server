@@ -103,6 +103,8 @@ type Snapshot struct {
 	Permissions []Permission
 	Menus       []Menu
 	Departments []Department
+	// Catalog is the code-defined capabilities and pages; not stored.
+	Catalog Catalog
 	// CredentialVersions is bumped whenever an account's password is reset or
 	// the account is disabled/re-enabled; sessions carry the version they were
 	// issued with and become invalid when it changes.
@@ -112,6 +114,7 @@ type Snapshot struct {
 // Clone returns a deep copy, so a candidate change never touches the original.
 func (s *Snapshot) Clone() *Snapshot {
 	c := &Snapshot{
+		Catalog:            s.Catalog,
 		Accounts:           slices.Clone(s.Accounts),
 		Roles:              slices.Clone(s.Roles),
 		Permissions:        slices.Clone(s.Permissions),
@@ -212,31 +215,13 @@ type Route struct {
 	Path       string
 	Name       string
 	Permission string // capability required to view the page; empty = none
+	// Menu is the directory a newly installed page is placed in ("" = root).
+	Menu string
 }
 
-// RouteCatalog mirrors routeCatalog in src/features/system/catalog.ts.
-var RouteCatalog = []Route{
-	{"dashboard", "/", "工作台", ""},
-	{"users", "/users", "用户管理", "users:read"},
-	{"current-permissions", "/permissions", "权限示例", "permissions:read"},
-	{"audit", "/audit", "审计日志", "audit:read"},
-	{"system-accounts", "/system/accounts", "登录用户管理", "system:accounts:read"},
-	{"system-roles", "/system/roles", "角色管理", "system:roles:read"},
-	{"system-permissions", "/system/permissions", "权限管理", "system:permissions:read"},
-	{"system-menus", "/system/menus", "菜单管理", "system:menus:read"},
-	{"system-departments", "/system/departments", "部门管理", "system:departments:read"},
-}
-
-func routeByID(id string) (Route, bool) {
-	for _, r := range RouteCatalog {
-		if r.ID == id {
-			return r, true
-		}
-	}
-	return Route{}, false
-}
-
-// Capability is one entry of the API capability catalog.
+// Capability is one entry of the API capability catalog. Every endpoint is
+// bound to one of these codes; creating a permission record never grants
+// access to an endpoint on its own.
 type Capability struct {
 	Code   string
 	Method string
@@ -244,25 +229,86 @@ type Capability struct {
 	Name   string
 }
 
-// CapabilityCatalog mirrors apiCatalog in src/features/system/catalog.ts. Every
-// real endpoint must be bound to one of these codes; creating a permission
-// record never grants access to an endpoint on its own.
-var CapabilityCatalog = func() []Capability {
-	c := []Capability{
-		{"users:read", "GET", "/api/v1/users", "查看业务用户"},
-		{"users:write", "POST / PUT / PATCH / DELETE", "/api/v1/users/*", "维护业务用户"},
-		{"permissions:read", "GET", "/api/v1/auth/permissions", "查看自身权限"},
-		{"audit:read", "GET", "/api/v1/audit-logs", "查询审计日志"},
+// Catalog is what the code provides: the capabilities its endpoints check and
+// the pages the frontend registers (src/features/system/catalog.ts). The core
+// contributes system management; each business module contributes its own.
+type Catalog struct {
+	Capabilities []Capability
+	Routes       []Route
+}
+
+// Directory menus that pages are placed in by default.
+const (
+	MenuSystem   = "system"
+	MenuBusiness = "business"
+)
+
+// CoreCatalog is the catalog of the platform itself.
+func CoreCatalog() Catalog {
+	c := Catalog{
+		Capabilities: []Capability{
+			{"permissions:read", "GET", "/api/v1/auth/permissions", "查看自身权限"},
+			{"audit:read", "GET", "/api/v1/audit-logs", "查询审计日志"},
+		},
+		Routes: []Route{
+			{ID: DashboardRouteID, Path: "/", Name: "工作台"},
+			{ID: "current-permissions", Path: "/permissions", Name: "权限示例", Permission: "permissions:read", Menu: MenuBusiness},
+			{ID: "audit", Path: "/audit", Name: "审计日志", Permission: "audit:read", Menu: MenuBusiness},
+		},
 	}
 	names := map[string]string{
 		ResAccounts: "登录用户", ResRoles: "角色", ResPermissions: "权限",
 		ResMenus: "菜单", ResDepartments: "部门",
 	}
+	pages := map[string]string{
+		ResAccounts: "登录用户管理", ResRoles: "角色管理", ResPermissions: "权限管理",
+		ResMenus: "菜单管理", ResDepartments: "部门管理",
+	}
 	for _, r := range Resources {
-		c = append(c,
+		c.Capabilities = append(c.Capabilities,
 			Capability{"system:" + r + ":read", "GET", "/api/v1/system/" + r, "查看" + names[r]},
 			Capability{"system:" + r + ":write", "POST / PUT / DELETE", "/api/v1/system/" + r + "/*", "维护" + names[r]},
 		)
+		c.Routes = append(c.Routes, Route{ID: "system-" + r, Path: "/system/" + r, Name: pages[r],
+			Permission: "system:" + r + ":read", Menu: MenuSystem})
 	}
 	return c
-}()
+}
+
+// Merge combines catalogs. Duplicate capability codes or route ids are a
+// programming error and panic at startup.
+func Merge(catalogs ...Catalog) Catalog {
+	var out Catalog
+	codes, routes := map[string]bool{}, map[string]bool{}
+	for _, c := range catalogs {
+		for _, cap := range c.Capabilities {
+			if codes[cap.Code] {
+				panic("authz: duplicate capability " + cap.Code)
+			}
+			codes[cap.Code] = true
+			out.Capabilities = append(out.Capabilities, cap)
+		}
+		for _, r := range c.Routes {
+			if routes[r.ID] {
+				panic("authz: duplicate route " + r.ID)
+			}
+			routes[r.ID] = true
+			out.Routes = append(out.Routes, r)
+		}
+	}
+	for _, r := range out.Routes {
+		if r.Permission != "" && !codes[r.Permission] {
+			panic("authz: route " + r.ID + " needs unknown capability " + r.Permission)
+		}
+	}
+	return out
+}
+
+func (s *Snapshot) route(id string) (Route, bool) {
+	for _, r := range s.Catalog.Routes {
+		if r.ID == id {
+			return r, true
+		}
+	}
+	return Route{}, false
+}

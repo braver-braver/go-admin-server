@@ -1077,7 +1077,6 @@ components:
 
   responses:
     Session:
-      x-go-name: SessionResponseBody
       description: Validated session. Login sets a rotated session cookie; all session responses use Cache-Control no-store.
       content:
         application/json:

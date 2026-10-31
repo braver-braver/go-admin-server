@@ -10,20 +10,18 @@ import (
 	"github.com/braver-braver/go-admin-server/internal/apierr"
 	"github.com/braver-braver/go-admin-server/internal/auth"
 	"github.com/braver-braver/go-admin-server/internal/authz"
+	"github.com/braver-braver/go-admin-server/internal/httpx"
 	"github.com/braver-braver/go-admin-server/internal/store"
 )
 
-func (s *Server) systemOptions(w http.ResponseWriter, r *http.Request) {
-	sess := s.guard(w, r, "")
-	if sess == nil {
-		return
-	}
-	can := func(res string) bool { return sess.user.Has("system:" + res + ":read") }
+func (s *Server) systemOptions(c *httpx.Ctx) {
+	sess := c.Session
+	can := func(res string) bool { return sess.User.Has("system:" + res + ":read") }
 	if !slices.ContainsFunc(authz.Resources, can) {
-		writeError(w, apierr.New(403, "FORBIDDEN", "没有查看系统配置的权限。"))
+		httpx.WriteError(c.W, apierr.New(403, "FORBIDDEN", "没有查看系统配置的权限。"))
 		return
 	}
-	snap := sess.snap
+	snap := sess.Snap
 	items := []any{}
 	if can(authz.ResPermissions) {
 		for _, p := range snap.Permissions {
@@ -42,12 +40,12 @@ func (s *Server) systemOptions(w http.ResponseWriter, r *http.Request) {
 	}
 	if can(authz.ResDepartments) {
 		for _, d := range snap.Departments {
-			if sess.user.CanAccess(authz.Record{DepartmentID: d.ID}, "system:departments:read") {
+			if sess.User.CanAccess(authz.Record{DepartmentID: d.ID}, "system:departments:read") {
 				items = append(items, d)
 			}
 		}
 	}
-	writeData(w, http.StatusOK, map[string]any{"items": items})
+	c.OK(map[string]any{"items": items})
 }
 
 // lenientInt mirrors `Math.trunc(Number(v) || fallback)` of the mock's
@@ -70,7 +68,7 @@ func (s *Server) system(w http.ResponseWriter, r *http.Request) {
 	}
 	resource := r.PathValue("resource")
 	if !slices.Contains(authz.Resources, resource) {
-		writeError(w, apierr.New(404, "NOT_FOUND", "未知系统资源。"))
+		httpx.WriteError(w, apierr.New(404, "NOT_FOUND", "未知系统资源。"))
 		return
 	}
 	mode := "write"
@@ -84,7 +82,7 @@ func (s *Server) system(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if read {
 		if id != "" {
-			writeError(w, apierr.New(404, "NOT_FOUND", "请使用列表接口。"))
+			httpx.WriteError(w, apierr.New(404, "NOT_FOUND", "请使用列表接口。"))
 			return
 		}
 		s.listSystem(w, r, sess, resource)
@@ -94,22 +92,22 @@ func (s *Server) system(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && id == "",
 		(r.Method == http.MethodPut || r.Method == http.MethodDelete) && id != "":
 	default:
-		writeError(w, apierr.InvalidMethod)
+		httpx.WriteError(w, apierr.InvalidMethod)
 		return
 	}
 	var body []byte
 	if r.Method != http.MethodDelete {
-		body = readJSON(w, r)
+		body = httpx.ReadJSON(w, r)
 		if body == nil {
 			body = []byte("null")
 		}
 	}
 	change := authz.Change{
-		Resource: resource, ID: id, NewID: newID(), Remove: r.Method == http.MethodDelete, Body: body,
-		ActorID: sess.user.ID, ActorCredentialVersion: sess.stored.CredentialVersion,
+		Resource: resource, ID: id, NewID: httpx.NewID(), Remove: r.Method == http.MethodDelete, Body: body,
+		ActorID: sess.User.ID, ActorCredentialVersion: sess.CredentialVersion,
 	}
 	params := s.cfg.PasswordParams
-	record, err := s.store.ApplySystemChange(r.Context(), change, sess.actor(), func(pw string) (string, error) {
+	record, err := s.store.ApplySystemChange(r.Context(), change, sess.Actor(), func(pw string) (string, error) {
 		return auth.HashPassword(pw, params)
 	})
 	if err != nil {
@@ -118,20 +116,20 @@ func (s *Server) system(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodPost:
-		writeData(w, http.StatusCreated, record)
+		httpx.WriteData(w, http.StatusCreated, record)
 	case http.MethodDelete:
-		writeData(w, http.StatusOK, map[string]bool{"success": true})
+		httpx.WriteData(w, http.StatusOK, map[string]bool{"success": true})
 	default:
-		writeData(w, http.StatusOK, record)
+		httpx.WriteData(w, http.StatusOK, record)
 	}
 }
 
-func (s *Server) listSystem(w http.ResponseWriter, r *http.Request, sess *session, resource string) {
+func (s *Server) listSystem(w http.ResponseWriter, r *http.Request, sess *httpx.Session, resource string) {
 	q := r.URL.Query()
 	page := max(1, lenientInt(q.Get("page"), 1))
 	size := min(100, max(1, lenientInt(q.Get("pageSize"), 10)))
 	search := strings.ToLower(q.Get("search"))
-	snap, user := sess.snap, sess.user
+	snap, user := sess.Snap, sess.User
 	var items []any
 	add := func(rec any, name, key string) {
 		if strings.Contains(strings.ToLower(name+" "+key), search) {
@@ -167,7 +165,7 @@ func (s *Server) listSystem(w http.ResponseWriter, r *http.Request, sess *sessio
 	total := len(items)
 	start := min(total, (page-1)*size)
 	end := min(total, start+size)
-	writeData(w, http.StatusOK, store.List[any]{
+	httpx.WriteData(w, http.StatusOK, store.List[any]{
 		Items: append([]any{}, items[start:end]...),
 		Meta:  store.PageMeta{Page: page, PageSize: size, Total: total, TotalPageCount: max(1, (total+size-1)/size)},
 	})

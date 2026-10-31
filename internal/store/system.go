@@ -52,7 +52,7 @@ func (s *Store) Snapshot(ctx context.Context) (*authz.Snapshot, error) {
 			return err
 		}
 		var err error
-		snap, err = loadSnapshot(ctx, tx)
+		snap, err = s.load(ctx, tx)
 		return err
 	})
 	if err != nil {
@@ -64,8 +64,8 @@ func (s *Store) Snapshot(ctx context.Context) (*authz.Snapshot, error) {
 	return snap, nil
 }
 
-func loadSnapshot(ctx context.Context, q Querier) (*authz.Snapshot, error) {
-	snap := &authz.Snapshot{CredentialVersions: map[string]int{}}
+func (s *Store) load(ctx context.Context, q Querier) (*authz.Snapshot, error) {
+	snap := &authz.Snapshot{Catalog: s.catalog, CredentialVersions: map[string]int{}}
 	rows, err := q.Query(ctx, `SELECT id, name, code, parent_id, enabled, protected FROM departments ORDER BY position`)
 	if err != nil {
 		return nil, err
@@ -149,13 +149,17 @@ func (s *Store) ApplySystemChange(ctx context.Context, c authz.Change, actor Act
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('go-admin-server:system'))`); err != nil {
 			return err
 		}
-		before, err := loadSnapshot(ctx, tx)
+		before, err := s.load(ctx, tx)
 		if err != nil {
 			return err
 		}
 		if c.Resource == authz.ResDepartments && c.Remove {
-			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE department_id = $1)`, c.ID).Scan(&c.DepartmentInUse); err != nil {
-				return err
+			for _, inUse := range s.departmentRefs {
+				used, err := inUse(ctx, tx, c.ID)
+				if err != nil {
+					return err
+				}
+				c.DepartmentInUse = c.DepartmentInUse || used
 			}
 		}
 		res, rerr := authz.Apply(before, c)
@@ -185,7 +189,7 @@ func (s *Store) ApplySystemChange(ctx context.Context, c authz.Change, actor Act
 			method = "POST"
 		}
 		record = res.Record
-		return appendAudit(ctx, tx, actor, "system.changed", c.Resource+"/"+id, method+" "+c.Resource)
+		return Audit(ctx, tx, actor, "system.changed", c.Resource+"/"+id, method+" "+c.Resource)
 	})
 	if err != nil {
 		return nil, err
@@ -198,6 +202,39 @@ func (s *Store) invalidate() {
 	s.mu.Lock()
 	s.cached = nil
 	s.mu.Unlock()
+}
+
+// InstallCatalog records what the code provides and adds what the stored
+// configuration lacks (see authz.SyncCatalog). Run it on every start, after
+// migrating; it reports whether anything was added.
+func (s *Store) InstallCatalog(ctx context.Context, cat authz.Catalog) (bool, error) {
+	s.mu.Lock()
+	s.catalog = cat
+	s.cached = nil
+	s.mu.Unlock()
+	changed := false
+	err := s.tx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('go-admin-server:system'))`); err != nil {
+			return err
+		}
+		before, err := s.load(ctx, tx)
+		if err != nil || len(before.Accounts) == 0 {
+			return err // nothing installed yet: Bootstrap writes the catalog
+		}
+		var after *authz.Snapshot
+		if after, changed = authz.SyncCatalog(before, cat); !changed {
+			return nil
+		}
+		if err := saveDiff(ctx, tx, before, after, nil); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE system_state SET revision = revision + 1`)
+		return err
+	})
+	if changed {
+		s.invalidate()
+	}
+	return changed, err
 }
 
 // Bootstrap writes an initial configuration when there are no accounts yet.

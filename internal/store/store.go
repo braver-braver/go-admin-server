@@ -7,7 +7,11 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
+	"path/filepath"
+	"strings"
 	"sync"
+	"testing/fstest"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -24,6 +28,11 @@ var migrations embed.FS
 // Store wraps the connection pool and a cache of the system configuration.
 type Store struct {
 	pool *pgxpool.Pool
+	// departmentRefs report whether a module still has records in a
+	// department, which blocks deleting it.
+	departmentRefs []DepartmentRef
+	// catalog is what the code provides; set by InstallCatalog.
+	catalog authz.Catalog
 
 	mu       sync.Mutex
 	cached   *authz.Snapshot
@@ -47,15 +56,39 @@ func (s *Store) Close() { s.pool.Close() }
 // Ping checks the database for readiness probes.
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
-// Migrate applies all pending migrations.
-func (s *Store) Migrate(ctx context.Context) error {
+// Migrate applies all pending migrations of the core and of the given module
+// migration directories. Versions must be unique across all of them; modules
+// use timestamp versions. Out-of-order versions are applied, so a module added
+// later with an older timestamp still installs.
+func (s *Store) Migrate(ctx context.Context, modules ...fs.FS) error {
+	merged := fstest.MapFS{}
+	for _, src := range append([]fs.FS{mustSub(migrations, "migrations")}, modules...) {
+		if src == nil {
+			continue
+		}
+		err := fs.WalkDir(src, ".", func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".sql") {
+				return err
+			}
+			name := filepath.Base(path)
+			if _, dup := merged[name]; dup {
+				return fmt.Errorf("duplicate migration %s", name)
+			}
+			data, err := fs.ReadFile(src, path)
+			merged[name] = &fstest.MapFile{Data: data}
+			return err
+		})
+		if err != nil {
+			return err
+		}
+	}
 	db := stdlib.OpenDBFromPool(s.pool)
 	defer db.Close()
-	return migrate(ctx, db)
+	return migrate(ctx, db, merged)
 }
 
-func migrate(ctx context.Context, db *sql.DB) error {
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, mustSub(migrations, "migrations"))
+func migrate(ctx context.Context, db *sql.DB, files fs.FS) error {
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, files, goose.WithAllowOutofOrder(true))
 	if err != nil {
 		return err
 	}
@@ -63,9 +96,23 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	return err
 }
 
-// tx runs fn in a transaction.
-func (s *Store) tx(ctx context.Context, fn func(pgx.Tx) error) error {
+// Tx runs fn in a transaction; it commits when fn returns nil.
+func (s *Store) Tx(ctx context.Context, fn func(pgx.Tx) error) error {
 	return pgx.BeginFunc(ctx, s.pool, fn)
+}
+
+func (s *Store) tx(ctx context.Context, fn func(pgx.Tx) error) error { return s.Tx(ctx, fn) }
+
+// DB is the connection pool, for queries outside a transaction.
+func (s *Store) DB() Querier { return s.pool }
+
+// DepartmentRef reports whether a module still has records in a department.
+type DepartmentRef func(ctx context.Context, q Querier, departmentID string) (bool, error)
+
+// AddDepartmentReference registers a check that blocks deleting departments
+// still in use. Call it during startup, before serving.
+func (s *Store) AddDepartmentReference(ref DepartmentRef) {
+	s.departmentRefs = append(s.departmentRefs, ref)
 }
 
 // Querier is satisfied by the pool and by transactions.
@@ -75,7 +122,8 @@ type Querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-func isUniqueViolation(err error) bool {
+// IsUniqueViolation reports a unique-constraint violation.
+func IsUniqueViolation(err error) bool {
 	var pg *pgconn.PgError
 	return errors.As(err, &pg) && pg.Code == "23505"
 }

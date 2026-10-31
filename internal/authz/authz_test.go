@@ -15,7 +15,18 @@ type env struct {
 	next int
 }
 
-func newEnv(t *testing.T) *env { return &env{t: t, db: Demo()} }
+// usersCatalog stands in for the users module, which authz cannot import.
+var usersCatalog = Catalog{
+	Capabilities: []Capability{
+		{"users:read", "GET", "/api/v1/users", "查看业务用户"},
+		{"users:write", "POST / PUT / PATCH / DELETE", "/api/v1/users/*", "维护业务用户"},
+	},
+	Routes: []Route{{ID: "users", Path: "/users", Name: "用户管理", Permission: "users:read", Menu: MenuBusiness}},
+}
+
+func testCatalog() Catalog { return Merge(CoreCatalog(), usersCatalog) }
+
+func newEnv(t *testing.T) *env { return &env{t: t, db: Demo(testCatalog())} }
 
 func (e *env) change(actor, resource, id string, body any, remove bool) (any, *RuleError) {
 	e.t.Helper()
@@ -309,4 +320,47 @@ func mustJSON(t *testing.T, v any) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+func TestSyncCatalogInstallsANewModule(t *testing.T) {
+	db := Demo(CoreCatalog()) // installed before the users module existed
+	if _, ok := db.Department("operations"); !ok {
+		t.Fatal("demo departments missing")
+	}
+	viewer, _ := db.Principal("demo-viewer")
+	if viewer.Has("users:read") {
+		t.Fatal("unknown capability granted")
+	}
+	after, changed := SyncCatalog(db, testCatalog())
+	if !changed {
+		t.Fatal("nothing synced")
+	}
+	admin, _ := after.Principal(AdminAccountID)
+	if !admin.Has("users:write") || !slices.Contains(admin.Routes, "/users") {
+		t.Fatal("administrator must receive new capabilities and pages")
+	}
+	if v, _ := after.Principal("demo-viewer"); v.Has("users:read") || slices.Contains(v.Routes, "/users") {
+		t.Fatal("other roles must not receive new grants implicitly")
+	}
+	var page Menu
+	for _, m := range after.Menus {
+		if m.RouteID == "users" {
+			page = m
+		}
+	}
+	if page.ParentID != MenuBusiness || !page.Enabled {
+		t.Fatalf("new page placement %+v", page)
+	}
+	if _, again := SyncCatalog(after, testCatalog()); again {
+		t.Fatal("sync must be idempotent")
+	}
+}
+
+func TestMergeRejectsConflicts(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("duplicate capability accepted")
+		}
+	}()
+	Merge(CoreCatalog(), usersCatalog, usersCatalog)
 }
