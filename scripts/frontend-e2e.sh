@@ -19,7 +19,7 @@ cat > "$FRONTEND/playwright.backend.config.ts" <<'TS'
 import { defineConfig } from 'playwright/test'
 export default defineConfig({
   testDir: './e2e',
-  testMatch: ['app.e2e.ts', 'system.e2e.ts'],
+  testMatch: ['app.e2e.ts', 'system.e2e.ts', 'tickets.e2e.ts'],
   workers: 1,
   reporter: [['list']],
   use: {

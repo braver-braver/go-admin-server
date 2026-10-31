@@ -3,7 +3,6 @@ package tickets
 import (
 	"context"
 	"fmt"
-	"math/rand/v2"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -12,7 +11,7 @@ import (
 )
 
 // SeedDemo adds deterministic demo tickets, with timelines, when there are
-// none. Development only.
+// none: the same 36 tickets as the frontend mock. Development only.
 func (m *Module) SeedDemo(ctx context.Context) error {
 	return m.repo.st.Tx(ctx, func(tx pgx.Tx) error {
 		var exists bool
@@ -28,13 +27,13 @@ func (m *Module) SeedDemo(ctx context.Context) error {
 		departments := []string{"operations", "support", "sales", authz.RootDepartmentID}
 		statusesCycle := []string{"open", "open", "in_progress", "in_progress", "resolved", "closed"}
 		prioritiesCycle := []string{"medium", "low", "high", "medium", "urgent", "low", "high"}
-		r := rand.New(rand.NewPCG(7, 2026))
 		base := time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)
 		for i := 0; i < 36; i++ {
 			pick := titles[i%len(titles)]
 			status := statusesCycle[i%len(statusesCycle)]
-			created := base.Add(time.Duration(i*20+r.IntN(12)) * time.Hour)
-			updated := created.Add(time.Duration(1+r.IntN(48)) * time.Hour)
+			// Same formulas as the frontend mock (src/mocks/data/tickets.ts).
+			created := base.Add(time.Duration(i*20+i%12) * time.Hour)
+			updated := created.Add(time.Duration(1+(i*7)%48) * time.Hour)
 			id := fmt.Sprintf("tkt-%04d", i+1)
 			var assigneeID, assigneeName *string
 			if status != "open" || i%4 == 0 {

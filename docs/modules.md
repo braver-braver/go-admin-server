@@ -2,7 +2,7 @@
 
 A module is a Go package under `internal/modules/<name>` that implements `httpx.Module`. The platform gives it authentication, CSRF, capability checks, data scopes, audit, migrations and installation; the module supplies its tables, queries and handlers.
 
-`internal/modules/users` is the complete example. `internal/httpapi/module_test.go` contains a ~60-line module (`notes`) that shows the minimum.
+`internal/modules/users` is the complete CRUD example; `internal/modules/tickets` adds a workflow (status machine, assignment, timeline) and records with two owners (creator and assignee, via `store.ScopeSQLAny`). `internal/httpapi/module_test.go` contains a ~60-line module (`notes`) that shows the minimum.
 
 ## 1. Name the capabilities and pages
 

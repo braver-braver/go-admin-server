@@ -19,7 +19,7 @@ Serve the frontend and the API from one origin: route `/api/*` to this server an
 | --- | --- |
 | `server` | Migrate (unless `MIGRATE_ON_START=false`), bootstrap the administrator if configured, serve |
 | `server migrate` | Apply migrations and exit |
-| `server seed-demo` | Demo configuration and 120 business users; empty database only |
+| `server seed-demo` | Demo configuration, 120 business users and 36 tickets (the frontend mock's data); empty database only |
 
 Configuration is environment variables only; see [.env.example](.env.example). PostgreSQL must be built with ICU (official images are): business lists sort with a `zh-Hans-CN` collation, like the mock.
 
@@ -31,7 +31,8 @@ internal/authz         authorization kernel: pure functions, no I/O
 internal/store         PostgreSQL (pgx), core migrations, the module storage toolkit
 internal/httpx         the module toolkit: Module, Op, Ctx, envelope helpers
 internal/httpapi       platform operations (sessions, navigation, system, audit), guards, contract tests
-internal/modules/users the example business module: users, bulk operations, invitations, avatars
+internal/modules/users   example module: users, bulk operations, invitations, avatars
+internal/modules/tickets example module with a workflow: tickets, assignment, status machine, timeline
 internal/auth          argon2id passwords, session tokens
 internal/apierr        the { error: { code, message } } type
 api/openapi.yaml       contract copy the tests validate against
@@ -41,7 +42,7 @@ api/openapi.yaml       contract copy the tests validate against
 
 Business features are pluggable modules. A module declares its capabilities and frontend pages, its operations (the server runs the session, capability and CSRF guards before each handler), its own migrations, and optionally which departments it still uses and its demo data. Registering it is one line in `cmd/server/modules.go`. On start the server migrates every module and adds the capabilities and pages it does not know yet; only the super administrator receives them until an administrator grants them to roles.
 
-See [docs/modules.md](docs/modules.md) for the step-by-step guide and [AGENTS.md](AGENTS.md) for the engineering rules (written so coding agents can extend the server safely).
+Two modules ship: `users` (CRUD with data scopes) and `tickets` (assignment, a status machine and a timeline; "self" scopes cover created and assigned tickets). See [docs/modules.md](docs/modules.md) for the step-by-step guide and [AGENTS.md](AGENTS.md) for the engineering rules (written so coding agents can extend the server safely).
 
 ## Design
 
