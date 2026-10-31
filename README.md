@@ -26,22 +26,30 @@ Configuration is environment variables only; see [.env.example](.env.example). P
 ## Layout
 
 ```
-cmd/server            entry point, configuration, graceful shutdown
-internal/authz        authorization kernel: pure functions, no I/O
-internal/store        PostgreSQL (pgx) and embedded goose migrations
-internal/httpapi      routes, guards, handlers and the contract tests
-internal/auth         argon2id passwords, session tokens
-internal/apierr       the { error: { code, message } } type
-api/openapi.yaml      contract copy the tests validate against
+cmd/server             entry point, configuration, the module list (modules.go)
+internal/authz         authorization kernel: pure functions, no I/O
+internal/store         PostgreSQL (pgx), core migrations, the module storage toolkit
+internal/httpx         the module toolkit: Module, Op, Ctx, envelope helpers
+internal/httpapi       platform operations (sessions, navigation, system, audit), guards, contract tests
+internal/modules/users the example business module: users, bulk operations, invitations, avatars
+internal/auth          argon2id passwords, session tokens
+internal/apierr        the { error: { code, message } } type
+api/openapi.yaml       contract copy the tests validate against
 ```
+
+## Modules
+
+Business features are pluggable modules. A module declares its capabilities and frontend pages, its operations (the server runs the session, capability and CSRF guards before each handler), its own migrations, and optionally which departments it still uses and its demo data. Registering it is one line in `cmd/server/modules.go`. On start the server migrates every module and adds the capabilities and pages it does not know yet; only the super administrator receives them until an administrator grants them to roles.
+
+See [docs/modules.md](docs/modules.md) for the step-by-step guide and [AGENTS.md](AGENTS.md) for the engineering rules (written so coding agents can extend the server safely).
 
 ## Design
 
 | Topic | Choice |
 | --- | --- |
-| HTTP | Standard `net/http` routing. The route table mirrors the frontend's `operations.ts`; a test checks it against `api/openapi.yaml` both ways |
+| HTTP | Standard `net/http` routing of declarative operations (`httpx.Op`); a test checks the operations against `api/openapi.yaml` both ways |
 | Check order | `X-Requested-With` → Origin → session → capability → CSRF → body, exactly as the contract and mock define it |
-| Database | PostgreSQL with pgx; migrations embedded and applied on start |
+| Database | PostgreSQL with pgx; core and module migrations embedded and applied on start (goose) |
 | Sessions | Server-side, only the SHA-256 of the cookie token is stored; `HttpOnly; SameSite=Lax; Secure`; rotated on login, deleted on logout |
 | Revocation | Every request recomputes the principal from the live configuration. A password reset, disabling or re-enabling bumps the account's `credential_version`, which invalidates its sessions |
 | Passwords | argon2id (64 MiB, t=2); unknown emails cost the same time as wrong passwords |
@@ -69,7 +77,11 @@ TEST_DATABASE_URL='postgres://postgres@localhost:5432/postgres?sslmode=disable' 
 
 With `TEST_DATABASE_URL` (a role that may create databases), every test gets its own database cloned from a seeded template. The HTTP tests check every response: the `{data}` / `{error}` envelope, `Cache-Control: no-store`, success bodies against `api/openapi.yaml`, and each error code against the frontend's error table. They cover login and rotation, CSRF and header checks, cross-site origins, rate limiting, server-side paging and clamping, scoped lists and atomic batches, live revocation after role, password and status changes, serialized concurrent writes and uploads.
 
-The frontend's own Playwright suites (`app.e2e.ts`, `system.e2e.ts`) also pass against this server behind a same-origin proxy. They assume a fresh mock per test, so against a persistent database each test needs a freshly seeded one.
+The frontend's own Playwright suites (`app.e2e.ts`, `system.e2e.ts`) pass against this server deployed like production — the frontend build and the API behind one origin (`tools/gateway`), no mocks. They assume a fresh mock per test, so the script seeds a fresh database for each test:
+
+```bash
+FRONTEND=../react-admin-starter TEST_DATABASE_URL='postgres://postgres@localhost:5432/postgres?sslmode=disable' scripts/frontend-e2e.sh
+```
 
 ## Additions beyond the contract
 

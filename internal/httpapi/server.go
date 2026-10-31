@@ -48,13 +48,14 @@ type Server struct {
 	mux     *http.ServeMux
 }
 
-// Catalog is the platform catalog merged with every module's.
+// Catalog merges every module's catalog with the platform's. Module pages
+// come before the platform's example pages in menus.
 func Catalog(modules []httpx.Module) authz.Catalog {
-	cats := []authz.Catalog{authz.CoreCatalog()}
+	var cats []authz.Catalog
 	for _, m := range modules {
 		cats = append(cats, m.Catalog())
 	}
-	return authz.Merge(cats...)
+	return authz.Merge(append(cats, authz.CoreCatalog())...)
 }
 
 // New wires the server. It registers each module's department references with

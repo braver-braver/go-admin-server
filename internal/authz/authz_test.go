@@ -364,3 +364,18 @@ func TestMergeRejectsConflicts(t *testing.T) {
 	}()
 	Merge(CoreCatalog(), usersCatalog, usersCatalog)
 }
+
+// Fresh installations list menus in the reference mock's order: directories,
+// the dashboard, module pages, then the platform's own pages.
+func TestBootstrapMenuOrderMatchesTheMock(t *testing.T) {
+	db := Bootstrap(Merge(usersCatalog, CoreCatalog()), "管理员", "admin@example.com")
+	var ids []string
+	for _, m := range db.Menus {
+		ids = append(ids, m.ID)
+	}
+	want := []string{"business", "system", "dashboard", "users", "current-permissions", "audit",
+		"system-accounts", "system-roles", "system-permissions", "system-menus", "system-departments"}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("menus %v", ids)
+	}
+}

@@ -168,7 +168,7 @@ func (r *Repo) CreateUser(ctx context.Context, p *authz.Principal, snap *authz.S
 			dept = p.DepartmentID
 		}
 		rec := authz.Record{DepartmentID: dept, CreatedBy: p.ID}
-		if !p.CanAccess(rec, "users:write") || !p.CanWriteDepartment(dept) || !usableDepartment(snap, dept) {
+		if !p.CanAccess(rec, "users:write") || !p.CanWriteDepartment(CapWrite, dept) || !usableDepartment(snap, dept) {
 			return errDeptDenied
 		}
 		_, err := tx.Exec(ctx, `INSERT INTO users (id, department_id, created_by, first_name, last_name, username, email, phone_number, status, role, avatar_url)
@@ -216,7 +216,7 @@ func (r *Repo) UpdateUser(ctx context.Context, p *authz.Principal, snap *authz.S
 		if dept == "" {
 			dept = existing.DepartmentID
 		}
-		if dept != existing.DepartmentID && !p.CanWriteDepartment(dept) {
+		if dept != existing.DepartmentID && !p.CanWriteDepartment(CapWrite, dept) {
 			return apierr.New(403, "DATA_SCOPE_DENIED", "不能移到范围外的部门。")
 		}
 		moved := *existing

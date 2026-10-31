@@ -35,7 +35,16 @@ func SyncCatalog(s *Snapshot, cat Catalog) (*Snapshot, bool) {
 		})
 		changed = true
 	}
-	for i, r := range cat.Routes {
+	// Root pages first, then the rest in catalog order; Order follows suit.
+	routes := slices.Clone(cat.Routes)
+	nested := func(r Route) int {
+		if r.Menu == "" {
+			return 0
+		}
+		return 1
+	}
+	slices.SortStableFunc(routes, func(a, b Route) int { return nested(a) - nested(b) })
+	for i, r := range routes {
 		if slices.ContainsFunc(out.Menus, func(m Menu) bool { return m.Kind == "page" && m.RouteID == r.ID }) {
 			continue
 		}

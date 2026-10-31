@@ -259,10 +259,11 @@ func (p *Principal) CanAccess(r Record, permission string) bool {
 		(scope.Self && ((r.CreatedBy != "" && r.CreatedBy == p.ID) || (r.ID != "" && r.ID == p.ID)))
 }
 
-// CanWriteDepartment reports whether new business records may be placed in a
-// department through users:write.
-func (p *Principal) CanWriteDepartment(departmentID string) bool {
-	scope, ok := p.DataScopes["users:write"]
+// CanWriteDepartment reports whether records may be placed in (or moved to) a
+// department through a write capability. "self" allows the actor's own
+// department, where records it creates will live.
+func (p *Principal) CanWriteDepartment(permission, departmentID string) bool {
+	scope, ok := p.DataScopes[permission]
 	return ok && (scope.All || slices.Contains(scope.Departments, departmentID) ||
 		(scope.Self && p.DepartmentID == departmentID))
 }
