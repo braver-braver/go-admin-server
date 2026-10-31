@@ -39,7 +39,7 @@ func (n *notes) Operations() []httpx.Op {
 }
 
 func (n *notes) Migrations() fs.FS {
-	return fstest.MapFS{"20261101000000_notes.sql": {Data: []byte(`-- +goose Up
+	return fstest.MapFS{"20261102000000_notes.sql": {Data: []byte(`-- +goose Up
 CREATE TABLE notes (id text PRIMARY KEY, department_id text NOT NULL, created_by text NOT NULL);
 INSERT INTO notes VALUES ('n1', 'sales', 'admin'), ('n2', 'operations', 'admin');
 -- +goose Down

@@ -26,6 +26,7 @@ import (
 	"github.com/braver-braver/go-admin-server/internal/auth"
 	"github.com/braver-braver/go-admin-server/internal/authz"
 	"github.com/braver-braver/go-admin-server/internal/httpx"
+	"github.com/braver-braver/go-admin-server/internal/modules/tickets"
 	"github.com/braver-braver/go-admin-server/internal/modules/users"
 	"github.com/braver-braver/go-admin-server/internal/store"
 )
@@ -90,7 +91,7 @@ func setup() error {
 		return err
 	}
 	defer st.Close()
-	mods := []httpx.Module{users.New(st, os.TempDir())}
+	mods := []httpx.Module{users.New(st, os.TempDir()), tickets.New(st)}
 	if err := Install(ctx, st, slog.New(slog.NewTextHandler(io.Discard, nil)), mods); err != nil {
 		return err
 	}
@@ -106,8 +107,10 @@ func setup() error {
 	if _, err := st.Bootstrap(ctx, snap, passwords); err != nil {
 		return err
 	}
-	if err := mods[0].(httpx.DemoSeeder).SeedDemo(ctx); err != nil {
-		return err
+	for _, m := range mods {
+		if err := m.(httpx.DemoSeeder).SeedDemo(ctx); err != nil {
+			return err
+		}
 	}
 	st.Close()
 
@@ -148,7 +151,7 @@ func newTestEnvWith(t *testing.T, extra func(*store.Store) []httpx.Module, tweak
 	if err != nil {
 		t.Fatal(err)
 	}
-	mods := []httpx.Module{users.New(st, t.TempDir())}
+	mods := []httpx.Module{users.New(st, t.TempDir()), tickets.New(st)}
 	if extra != nil {
 		mods = append(mods, extra(st)...)
 	}
@@ -281,6 +284,8 @@ var errorCatalog = map[string][]int{
 	"DUPLICATE_USER": {422}, "INVALID_STATUS": {422}, "INVALID_EMAIL": {422}, "INVALID_ROLE": {422},
 	"FILE_REQUIRED": {422}, "UNSUPPORTED_FILE_TYPE": {422}, "FILE_TOO_LARGE": {422}, "INVALID_FIELDS": {422},
 	"SYSTEM_RULE": {401, 403, 404, 409, 422}, "NOT_FOUND": {404}, "INVALID_METHOD": {400},
+	"TICKET_NOT_FOUND": {404}, "INVALID_TICKET_FIELDS": {422}, "INVALID_TICKET_TRANSITION": {409},
+	"TICKET_CLOSED": {409}, "INVALID_ASSIGNEE": {422},
 	"RATE_LIMITED": {429}, "INTERNAL": {500},
 }
 

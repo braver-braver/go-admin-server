@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/braver-braver/go-admin-server/internal/httpx"
+	"github.com/braver-braver/go-admin-server/internal/modules/tickets"
 	"github.com/braver-braver/go-admin-server/internal/modules/users"
 	"github.com/braver-braver/go-admin-server/internal/store"
 )
@@ -11,5 +12,6 @@ import (
 func modules(st *store.Store, uploadDir string) []httpx.Module {
 	return []httpx.Module{
 		users.New(st, uploadDir),
+		tickets.New(st),
 	}
 }

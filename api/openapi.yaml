@@ -414,6 +414,11 @@ paths:
                   user.invited,
                   user.batch_invited,
                   system.changed,
+                  ticket.created,
+                  ticket.updated,
+                  ticket.commented,
+                  ticket.status_changed,
+                  ticket.assigned,
                 ]
       responses:
         '200':
@@ -635,6 +640,316 @@ paths:
           $ref: "#/components/responses/Error"
         422:
           $ref: "#/components/responses/Error"
+  /tickets:
+    get:
+      operationId: listTickets
+      description: Requires tickets:read. Scope, filters and search apply before counting, sorting and paging.
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          description: Values above 100 are clamped to 100 (the response meta reports the effective pageSize).
+          schema: { type: integer, minimum: 1, default: 10 }
+        - name: search
+          in: query
+          description: Case-insensitive match on the number and the title.
+          schema: { type: string }
+        - name: status
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string, enum: [open, in_progress, resolved, closed] }
+        - name: priority
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string, enum: [low, medium, high, urgent] }
+        - name: category
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string, enum: [consultation, fault, request, complaint] }
+        - name: assignee
+          in: query
+          description: me, unassigned, or an account id.
+          schema: { type: string }
+        - name: sortBy
+          in: query
+          description: One of number, title, priority, status, createdAt, updatedAt. Any other value falls back to updatedAt.
+          schema: { type: string, default: updatedAt }
+        - name: sortOrder
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        '200':
+          description: One page of tickets.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/TicketList'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: createTicket
+      description: Requires tickets:write and a valid CSRF token; assigneeId also needs tickets:assign.
+      parameters:
+        - $ref: '#/components/parameters/RequestedWith'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TicketCreate'
+      responses:
+        '201':
+          description: Created ticket.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Ticket'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+  /tickets/summary:
+    get:
+      operationId: ticketSummary
+      description: Requires tickets:read. Counts within the caller read scope.
+      responses:
+        '200':
+          description: Ticket counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/TicketSummary'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+  /tickets/assignees:
+    get:
+      operationId: listTicketAssignees
+      description: Requires tickets:assign. Enabled accounts holding tickets:write.
+      responses:
+        '200':
+          description: Assignable accounts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/TicketAssignee'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+  /tickets/assign:
+    post:
+      operationId: assignTickets
+      description: Requires tickets:assign and a valid CSRF token. All tickets or none.
+      parameters:
+        - $ref: '#/components/parameters/RequestedWith'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TicketAssign'
+      responses:
+        '200':
+          description: Number of tickets assigned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [assignedCount]
+                    properties:
+                      assignedCount: { type: integer, minimum: 0 }
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+  /tickets/{id}:
+    get:
+      operationId: getTicket
+      description: Requires tickets:read. Tickets outside the read scope answer 404.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The ticket with its timeline.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/TicketDetail'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: updateTicket
+      description: Requires tickets:write and a valid CSRF token.
+      parameters:
+        - $ref: '#/components/parameters/RequestedWith'
+        - $ref: '#/components/parameters/CsrfToken'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TicketUpdate'
+      responses:
+        '200':
+          description: Updated ticket.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Ticket'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+  /tickets/{id}/comments:
+    post:
+      operationId: commentTicket
+      description: Requires tickets:write and a valid CSRF token.
+      parameters:
+        - $ref: '#/components/parameters/RequestedWith'
+        - $ref: '#/components/parameters/CsrfToken'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TicketComment'
+      responses:
+        '201':
+          description: The comment event.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/TicketEvent'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+  /tickets/{id}/transition:
+    post:
+      operationId: transitionTicket
+      description: Requires tickets:write and a valid CSRF token. Moving to resolved needs a comment.
+      parameters:
+        - $ref: '#/components/parameters/RequestedWith'
+        - $ref: '#/components/parameters/CsrfToken'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TicketTransition'
+      responses:
+        '200':
+          description: The ticket after the change.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Ticket'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
 components:
   securitySchemes:
     sessionCookie:
@@ -777,6 +1092,11 @@ components:
               user.invited,
               user.batch_invited,
               system.changed,
+              ticket.created,
+              ticket.updated,
+              ticket.commented,
+              ticket.status_changed,
+              ticket.assigned,
             ]
         target: { type: string }
         detail: { type: string }
@@ -1075,6 +1395,127 @@ components:
           items:
             $ref: "#/components/schemas/SystemRecord"
 
+    TicketStatus:
+      type: string
+      enum: [open, in_progress, resolved, closed]
+    Ticket:
+      type: object
+      required: [id, number, title, description, category, priority, status, departmentId, departmentName, createdBy, createdByName, assigneeId, assigneeName, createdAt, updatedAt, resolvedAt, closedAt]
+      properties:
+        id: { type: string }
+        number: { type: string, description: 'Human-readable, e.g. TK-000001.' }
+        title: { type: string }
+        description: { type: string }
+        category: { type: string, enum: [consultation, fault, request, complaint] }
+        priority: { type: string, enum: [low, medium, high, urgent] }
+        status:
+          $ref: '#/components/schemas/TicketStatus'
+        departmentId: { type: string }
+        departmentName: { type: string }
+        createdBy: { type: string }
+        createdByName: { type: string }
+        assigneeId: { type: [string, 'null'] }
+        assigneeName: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        resolvedAt: { type: [string, 'null'], format: date-time }
+        closedAt: { type: [string, 'null'], format: date-time }
+    TicketEvent:
+      type: object
+      required: [id, kind, actorId, actorName, body, fromStatus, toStatus, assigneeName, createdAt]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [created, updated, comment, status_changed, assigned] }
+        actorId: { type: string }
+        actorName: { type: string }
+        body: { type: string }
+        fromStatus: { type: [string, 'null'], enum: [open, in_progress, resolved, closed, null] }
+        toStatus: { type: [string, 'null'], enum: [open, in_progress, resolved, closed, null] }
+        assigneeName: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+    TicketDetail:
+      allOf:
+        - $ref: '#/components/schemas/Ticket'
+        - type: object
+          required: [events]
+          properties:
+            events:
+              type: array
+              description: Oldest first.
+              items:
+                $ref: '#/components/schemas/TicketEvent'
+    TicketList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Ticket'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+    TicketSummary:
+      type: object
+      required: [open, inProgress, resolved, closed, assignedToMe]
+      properties:
+        open: { type: integer, minimum: 0 }
+        inProgress: { type: integer, minimum: 0 }
+        resolved: { type: integer, minimum: 0 }
+        closed: { type: integer, minimum: 0 }
+        assignedToMe: { type: integer, minimum: 0, description: Open or in progress and assigned to the caller. }
+    TicketAssignee:
+      type: object
+      required: [id, name, email, departmentId, departmentName]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string }
+        departmentId: { type: string }
+        departmentName: { type: string }
+    TicketCreate:
+      type: object
+      required: [title, description, category, priority]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, minLength: 1, maxLength: 5000 }
+        category: { type: string, enum: [consultation, fault, request, complaint] }
+        priority: { type: string, enum: [low, medium, high, urgent] }
+        departmentId: { type: string, description: Must be inside the actor tickets:write scope. Defaults to the actor department. }
+        assigneeId: { type: string, description: Needs tickets:assign. The assignee must hold tickets:write covering the ticket. }
+    TicketUpdate:
+      type: object
+      required: [title, description, category, priority]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, minLength: 1, maxLength: 5000 }
+        category: { type: string, enum: [consultation, fault, request, complaint] }
+        priority: { type: string, enum: [low, medium, high, urgent] }
+    TicketComment:
+      type: object
+      required: [body]
+      properties:
+        body: { type: string, minLength: 1, maxLength: 2000 }
+    TicketTransition:
+      type: object
+      required: [to]
+      description: Moving to resolved requires a non-empty comment (the resolution).
+      properties:
+        to:
+          $ref: '#/components/schemas/TicketStatus'
+        comment: { type: string, maxLength: 2000 }
+    TicketAssign:
+      type: object
+      required: [ids, assigneeId]
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 200
+          uniqueItems: true
+          items: { type: string }
+        assigneeId:
+          type: [string, 'null']
+          description: null unassigns.
   responses:
     Session:
       description: Validated session. Login sets a rotated session cookie; all session responses use Cache-Control no-store.

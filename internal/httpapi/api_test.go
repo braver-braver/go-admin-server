@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/braver-braver/go-admin-server/internal/httpx"
+	"github.com/braver-braver/go-admin-server/internal/modules/tickets"
 	"github.com/braver-braver/go-admin-server/internal/modules/users"
 )
 
@@ -422,7 +423,7 @@ func TestRoutesMatchTheContract(t *testing.T) {
 	if spec == nil {
 		t.Skip("TEST_DATABASE_URL not set")
 	}
-	s := &Server{modules: []httpx.Module{users.New(nil, "")}}
+	s := &Server{modules: []httpx.Module{users.New(nil, ""), tickets.New(nil)}}
 	routed := map[string]bool{}
 	for _, op := range s.operations() {
 		if op.ID != "downloadFile" { // extension, not in the contract yet

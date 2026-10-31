@@ -71,14 +71,22 @@ func ClampPage(p Page, total int) PageMeta {
 // ScopeSQL renders a data scope as a SQL condition over the given department
 // and owner columns, appending its arguments.
 func ScopeSQL(f authz.ScopeFilter, deptCol, ownerCol string, args *[]any) string {
+	return ScopeSQLAny(f, deptCol, []string{ownerCol}, args)
+}
+
+// ScopeSQLAny is ScopeSQL for records with several owners, e.g. a creator and
+// an assignee: "self" matches a row when any of ownerCols is the actor.
+func ScopeSQLAny(f authz.ScopeFilter, deptCol string, ownerCols []string, args *[]any) string {
 	if f.All {
 		return "true"
 	}
 	*args = append(*args, f.DepartmentIDs)
 	cond := "(" + deptCol + " = ANY($" + strconv.Itoa(len(*args)) + ")"
-	if f.SelfID != "" {
+	if f.SelfID != "" && len(ownerCols) > 0 {
 		*args = append(*args, f.SelfID)
-		cond += " OR " + ownerCol + " = $" + strconv.Itoa(len(*args))
+		for _, col := range ownerCols {
+			cond += " OR " + col + " = $" + strconv.Itoa(len(*args))
+		}
 	}
 	return cond + ")"
 }
