@@ -19,7 +19,18 @@ jobs:
         with: { go-version-file: go.mod }
       - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - run: go vet ./...
+      - run: go run ./tools/oacheck api/openapi.yaml
       - run: go test -race -count=1 ./...
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
       - run: go build ./cmd/server
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --tag go-admin-server:ci .
+      - name: The image starts and refuses to run without a database
+        run: |
+          out=$(docker run --rm go-admin-server:ci 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -q "DATABASE_URL is required"

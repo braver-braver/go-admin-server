@@ -102,8 +102,8 @@ func (s *Server) coreOperations() []httpx.Op {
 		{Method: "GET", Path: "/auth/session", ID: "getSession", Handle: s.getSession},
 		{Method: "POST", Path: "/auth/logout", ID: "logout", Handle: s.logout},
 		{Method: "GET", Path: "/auth/permissions", ID: "getPermissions", Permission: "permissions:read", Handle: s.getPermissions},
-		{Method: "GET", Path: "/auth/navigation", ID: "currentNavigation", Handle: s.navigation},
-		{Method: "GET", Path: "/system/options", ID: "systemReferenceOptions", Handle: s.systemOptions},
+		{Method: "GET", Path: "/auth/navigation", ID: "getNavigation", Handle: s.navigation},
+		{Method: "GET", Path: "/system/options", ID: "getSystemOptions", Handle: s.systemOptions},
 		{Method: "GET", Path: "/audit-logs", ID: "listAuditLogs", Permission: "audit:read", Handle: s.listAudit},
 	}
 }

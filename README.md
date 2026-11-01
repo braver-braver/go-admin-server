@@ -35,7 +35,7 @@ internal/modules/users   example module: users, bulk operations, invitations, av
 internal/modules/tickets example module with a workflow: tickets, assignment, status machine, timeline
 internal/auth          argon2id passwords, session tokens
 internal/apierr        the { error: { code, message } } type
-api/openapi.yaml       contract copy the tests validate against
+api/openapi.yaml       the frontend's generated contract (scripts/sync-contract.sh); tests validate against it
 ```
 
 ## Modules
@@ -48,7 +48,7 @@ Two modules ship: `users` (CRUD with data scopes) and `tickets` (assignment, a s
 
 | Topic | Choice |
 | --- | --- |
-| HTTP | Standard `net/http` routing of declarative operations (`httpx.Op`); a test checks the operations against `api/openapi.yaml` both ways |
+| HTTP | Standard `net/http` routing of declarative operations (`httpx.Op`); a test checks paths, methods and operation ids against `api/openapi.yaml` both ways |
 | Check order | `X-Requested-With` → Origin → session → capability → CSRF → body, exactly as the contract and mock define it |
 | Database | PostgreSQL with pgx; core and module migrations embedded and applied on start (goose) |
 | Sessions | Server-side, only the SHA-256 of the cookie token is stored; `HttpOnly; SameSite=Lax; Secure`; rotated on login, deleted on logout |
@@ -84,14 +84,12 @@ The frontend's own Playwright suites (`app.e2e.ts`, `system.e2e.ts`) pass agains
 FRONTEND=../react-admin-starter TEST_DATABASE_URL='postgres://postgres@localhost:5432/postgres?sslmode=disable' scripts/frontend-e2e.sh
 ```
 
-## Additions beyond the contract
+## Contract
 
-These should be added to the frontend contract:
+The API contract lives in the frontend: the operation registry and Zod schemas in `src/contract/` generate `docs/api.openapi.yaml` there (`pnpm openapi`). This repository keeps a copy in `api/openapi.yaml`; never edit it by hand. After a contract change in the frontend:
 
-| Addition | Why |
-| --- | --- |
-| `429 RATE_LIMITED` on login | Login throttling per IP and per email |
-| `500 INTERNAL` | Unexpected failures, without internal details |
-| `403 FORBIDDEN` for a disallowed `Origin` / `Sec-Fetch-Site: cross-site` | CSRF defence in depth for writes |
-| `GET /api/v1/uploads/{id}` (needs `users:read`) | Uploads return a persistent URL, as the contract asks of real servers |
-| Uploads accept PNG, JPEG, GIF and WebP only, by content sniffing | SVG is an `image/*` type but can carry script on the API origin |
+```bash
+scripts/sync-contract.sh ../react-admin-starter   # or a tag/commit: scripts/sync-contract.sh v1.0.0
+```
+
+The HTTP tests then fail until the server matches it.

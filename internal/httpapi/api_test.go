@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/braver-braver/go-admin-server/internal/authz"
 	"github.com/braver-braver/go-admin-server/internal/httpx"
 	"github.com/braver-braver/go-admin-server/internal/modules/tickets"
 	"github.com/braver-braver/go-admin-server/internal/modules/users"
@@ -426,18 +427,29 @@ func TestRoutesMatchTheContract(t *testing.T) {
 	s := &Server{modules: []httpx.Module{users.New(nil, ""), tickets.New(nil)}}
 	routed := map[string]bool{}
 	for _, op := range s.operations() {
-		if op.ID != "downloadFile" { // extension, not in the contract yet
-			routed[op.Method+" "+op.Path] = true
+		routed[op.Method+" "+op.Path] = true
+	}
+	// System resources share one handler; the contract lists each resource.
+	for _, res := range authz.Resources {
+		for _, op := range []string{"GET /system/", "POST /system/"} {
+			routed[op+res] = true
+		}
+		for _, op := range []string{"PUT /system/", "DELETE /system/"} {
+			routed[op+res+"/{id}"] = true
 		}
 	}
-	routed["GET /system/{resource}"] = true
-	routed["POST /system/{resource}"] = true
-	routed["PUT /system/{resource}/{id}"] = true
-	routed["DELETE /system/{resource}/{id}"] = true
 	inSpec := map[string]bool{}
+	specIDs := map[string]string{}
 	for path, item := range spec.Paths.Map() {
-		for method := range item.Operations() {
+		for method, op := range item.Operations() {
 			inSpec[method+" "+path] = true
+			specIDs[method+" "+path] = op.OperationID
+		}
+	}
+	// Declared operation ids match the contract's.
+	for _, op := range s.operations() {
+		if id := specIDs[op.Method+" "+op.Path]; id != "" && id != op.ID {
+			t.Errorf("%s %s: operation id %q, contract says %q", op.Method, op.Path, op.ID, id)
 		}
 	}
 	for op := range inSpec {
