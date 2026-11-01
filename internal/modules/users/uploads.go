@@ -24,8 +24,9 @@ var allowedImageTypes = []string{"image/png", "image/jpeg", "image/gif", "image/
 
 var (
 	errFileRequired = apierr.New(422, "FILE_REQUIRED", "请选择要上传的文件。")
-	errFileType     = apierr.New(422, "UNSUPPORTED_FILE_TYPE", "仅支持图片文件。")
+	errFileType     = apierr.New(422, "UNSUPPORTED_FILE_TYPE", "仅支持 PNG、JPEG、GIF 或 WebP 图片。")
 	errFileTooLarge = apierr.New(422, "FILE_TOO_LARGE", "文件大小不能超过 2MB。")
+	errFileNotFound = apierr.New(404, "FILE_NOT_FOUND", "文件不存在。")
 	uploadIDPattern = regexp.MustCompile(`^[0-9a-f-]{36}$`)
 )
 
@@ -100,7 +101,7 @@ func (m *Module) download(c *httpx.Ctx) {
 	w, r := c.W, c.R
 	id := r.PathValue("id")
 	if !uploadIDPattern.MatchString(id) {
-		httpx.WriteError(w, apierr.New(404, "NOT_FOUND", "文件不存在。"))
+		httpx.WriteError(w, errFileNotFound)
 		return
 	}
 	up, err := m.repo.GetUpload(r.Context(), id)
@@ -109,7 +110,7 @@ func (m *Module) download(c *httpx.Ctx) {
 		return
 	}
 	if up == nil {
-		httpx.WriteError(w, apierr.New(404, "NOT_FOUND", "文件不存在。"))
+		httpx.WriteError(w, errFileNotFound)
 		return
 	}
 	data, err := os.ReadFile(filepath.Join(m.uploadDir, id))

@@ -276,7 +276,7 @@ func checkEnvelope(t *testing.T, method, path string, r *resp) {
 }
 
 // errorCatalog mirrors src/contract/errors.ts: each code and the statuses it
-// may be sent with. RATE_LIMITED and INTERNAL are not in the frontend table yet.
+// may be sent with.
 var errorCatalog = map[string][]int{
 	"UNAUTHENTICATED": {401}, "INVALID_CREDENTIALS": {401}, "INVALID_REQUEST": {400},
 	"INVALID_CREDENTIALS_FORMAT": {400}, "REQUEST_HEADER_REQUIRED": {403}, "INVALID_CSRF_TOKEN": {403},
@@ -285,7 +285,7 @@ var errorCatalog = map[string][]int{
 	"FILE_REQUIRED": {422}, "UNSUPPORTED_FILE_TYPE": {422}, "FILE_TOO_LARGE": {422}, "INVALID_FIELDS": {422},
 	"SYSTEM_RULE": {401, 403, 404, 409, 422}, "NOT_FOUND": {404}, "INVALID_METHOD": {400},
 	"TICKET_NOT_FOUND": {404}, "INVALID_TICKET_FIELDS": {422}, "INVALID_TICKET_TRANSITION": {409},
-	"TICKET_CLOSED": {409}, "INVALID_ASSIGNEE": {422},
+	"TICKET_CLOSED": {409}, "INVALID_ASSIGNEE": {422}, "FILE_NOT_FOUND": {404},
 	"RATE_LIMITED": {429}, "INTERNAL": {500},
 }
 

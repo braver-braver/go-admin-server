@@ -55,9 +55,8 @@ func (m *Module) Operations() []httpx.Op {
 		{Method: "POST", Path: "/users/batch-delete", ID: "batchDeleteUsers", Permission: CapWrite, Handle: m.batchDeleteUsers},
 		{Method: "PATCH", Path: "/users/status", ID: "updateUsersStatus", Permission: CapWrite, Handle: m.updateUsersStatus},
 		{Method: "POST", Path: "/users/invite", ID: "inviteUser", Permission: CapWrite, Handle: m.inviteUser},
-		{Method: "POST", Path: "/users/invite-batch", ID: "batchInviteUsers", Permission: CapWrite, Handle: m.batchInviteUsers},
+		{Method: "POST", Path: "/users/invite-batch", ID: "inviteUsersBatch", Permission: CapWrite, Handle: m.batchInviteUsers},
 		{Method: "POST", Path: "/uploads", ID: "uploadFile", Permission: CapWrite, Handle: m.upload},
-		// Extension, not yet in the contract: avatars are shown to readers.
 		{Method: "GET", Path: "/uploads/{id}", ID: "downloadFile", Permission: CapRead, Handle: m.download},
 	}
 }

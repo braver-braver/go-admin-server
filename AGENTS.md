@@ -19,7 +19,7 @@ Go backend for [react-admin-starter](https://github.com/braver-braver/react-admi
 
 ## Contract changes
 
-A change to any request, response, status or error code is a contract change: update the frontend's `src/contract/` and `docs/api.openapi.yaml` in the same piece of work, and copy the OpenAPI document to `api/openapi.yaml` here. After v1.0, breaking changes need `/api/v2`.
+A change to any request, response, status or error code is a contract change: change the frontend's `src/contract/` (its OpenAPI document is generated from it with `pnpm openapi`), then run `scripts/sync-contract.sh` here; never edit `api/openapi.yaml` by hand. After v1.0, breaking changes need `/api/v2`.
 
 ## Development practice
 
